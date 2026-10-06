@@ -1,0 +1,93 @@
+<!-- sim.launch: the real navigation + opportunistic-checking stack on a simulated 2D robot.
+
+     Run it on its own ROS master so the sim's /cmd_vel can never reach a real robot:
+       ROS_MASTER_URI=http://localhost:11411 roslaunch mattbot_sim sim.launch scenario:=remove_one
+
+     Simulated (mattbot_sim):  sim_world (base + odom, perfect localization, maps, perfect detector, optional /scan),
+                               amcl stub (dynamic_reconfigure only), scenario_runner (goals + events), sim_monitor (scoring)
+     Real, unchanged:          twist_mux, publish_transforms, occupancy_grid_mapper, navigator_node, observation_planner,
+                               observation_evaluator (depth off), observation_ledger, object_belief_map
+     Not run:                  hardware drivers, amcl, localization_quality, the OSOD detector, DDS nodes
+-->
+<launch>
+  <arg name="scenario" default="remove_one"/>
+  <arg name="scenario_file" default="$(find mattbot_sim)/scenarios/$(arg scenario).yaml"/>
+  <!-- Run length in s after localization; -1 = use the scenario's duration (0 = until Ctrl-C) -->
+  <arg name="duration" default="-1"/>
+  <arg name="results_dir" default="$(find mattbot_sim)/results"/>
+  <arg name="robot_id" default="99"/>
+  <!-- Simulated lidar, only for RViz -->
+  <arg name="scan" default="false"/>
+
+  <!-- Detector imperfections (default: perfect) -->
+  <arg name="miss_prob" default="0.0"/>
+  <arg name="pos_noise_std" default="0.0"/>
+  <arg name="false_pos_rate" default="0.0"/>
+  <arg name="detect_hz" default="5.0"/>
+
+  <!-- Opportunistic checking. Beliefs decay faster than on the robot (60 / 120 s) so checks happen within minutes. -->
+  <arg name="observe" default="true"/>
+  <arg name="belief_hold_s" default="20.0"/>
+  <arg name="belief_decay_s" default="40.0"/>
+  <arg name="observe_dwell_s" default="4.0"/>
+  <arg name="observe_check_below_belief" default="0.5"/>
+  <arg name="observe_cooldown_s" default="60.0"/>
+  <arg name="observe_min_absent_frames" default="8"/>
+  <arg name="cruising_velocity" default="0.40"/>
+
+  <param name="/use_sim_time" value="false"/>
+  <param name="/sim/scenario_file" value="$(arg scenario_file)"/>
+  <!-- The ledger needs an integer ROBOT_ID; detections carry it as sending_agent -->
+  <env name="ROBOT_ID" value="$(arg robot_id)"/>
+  <env name="PYTHONUNBUFFERED" value="1"/>
+
+  <!-- ===== Simulated hardware, localization and perception ===== -->
+  <node pkg="mattbot_sim" type="sim_world.py" name="sim_world" output="screen" required="true">
+    <param name="scan" value="$(arg scan)"/>
+    <param name="miss_prob" value="$(arg miss_prob)"/>
+    <param name="pos_noise_std" value="$(arg pos_noise_std)"/>
+    <param name="false_pos_rate" value="$(arg false_pos_rate)"/>
+    <param name="detect_hz" value="$(arg detect_hz)"/>
+    <param name="urdf" value="$(find mattbot_bringup)/urdf/robot_tf_short.urdf"/>
+  </node>
+  <node pkg="mattbot_sim" type="sim_amcl_stub.py" name="amcl" output="log"/>
+
+  <!-- ===== Real robot stack (as in short.launch) ===== -->
+  <include file="$(find twist_mux)/launch/twist_mux.launch">
+    <arg name="output_loc" value="log"/>
+  </include>
+  <node pkg="mattbot_bringup" type="publish_transforms.py" name="rob_st_pub" output="log">
+    <param name="robot_description" value="$(find mattbot_bringup)/urdf/robot_tf_short.urdf"/>
+  </node>
+
+  <include file="$(find mattbot_navigation)/launch/localize_and_navigate_combined_map_short.launch">
+    <arg name="observe" value="$(arg observe)"/>
+    <arg name="observe_dwell_s" value="$(arg observe_dwell_s)"/>
+    <arg name="observe_check_below_belief" value="$(arg observe_check_below_belief)"/>
+    <arg name="cruising_velocity" value="$(arg cruising_velocity)"/>
+  </include>
+  <!-- Not exposed by the navigation launch; the node's private param is set from here -->
+  <param name="observation_planner/cooldown_s" value="$(arg observe_cooldown_s)"/>
+
+  <node if="$(arg observe)" name="observation_evaluator" pkg="mattbot_image_detection" type="observation_evaluator.py" output="screen">
+    <param name="tall" value="false"/>
+    <param name="use_depth" value="false"/>
+    <param name="min_absent_frames" value="$(arg observe_min_absent_frames)"/>
+  </node>
+
+  <node name="observation_ledger" pkg="mattbot_dds" type="observation_ledger.py" output="screen">
+    <param name="match_radius_m" value="0.75"/>
+  </node>
+  <node name="object_belief_map" pkg="mattbot_dds" type="object_belief_map.py" output="screen">
+    <param name="hold_s" value="$(arg belief_hold_s)"/>
+    <param name="decay_s" value="$(arg belief_decay_s)"/>
+  </node>
+
+  <!-- ===== Scenario and scoring ===== -->
+  <node pkg="mattbot_sim" type="scenario_runner.py" name="scenario_runner" output="screen" required="true">
+    <param name="duration_s" value="$(arg duration)"/>
+  </node>
+  <node pkg="mattbot_sim" type="sim_monitor.py" name="sim_monitor" output="screen">
+    <param name="results_dir" value="$(arg results_dir)"/>
+  </node>
+</launch>

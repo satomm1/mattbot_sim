@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>mattbot_sim</name>
+  <version>0.1.0</version>
+  <description>Lightweight 2D simulator for the mattbot stack (perfect localization and perception), for testing opportunistic obstacle checking without hardware</description>
+
+  <maintainer email="satomm@stanford.edu">Matthew Sato</maintainer>
+  <license>MIT</license>
+  <url type="repository">https://github.com/satomm1/mattbot_sim</url>
+  <author email="satomm@stanford.edu">Matthew Sato</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>dynamic_reconfigure</exec_depend>
+  <exec_depend>amcl</exec_depend>
+  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>mattbot_bringup</exec_depend>
+  <exec_depend>mattbot_navigation</exec_depend>
+  <exec_depend>mattbot_image_detection</exec_depend>
+  <exec_depend>mattbot_dds</exec_depend>
+  <exec_depend>mattbot_mcl</exec_depend>
+</package>

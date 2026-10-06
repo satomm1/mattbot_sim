@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Drives a sim run from the scenario file: patrol goals plus timed world events.
+
+1. Waits until the navigator is localized (/localized, or /robot_mode back to IDLE after LOCALIZING2).
+2. Sends the waypoints one at a time on /external_goal (as patrol.py does). A goal is done when the
+   navigator is IDLE again within ~reach_tol_m of it; if it went IDLE short of the goal the same goal
+   is re-sent (the navigator replans a duplicate goal while IDLE), and after ~max_retries it moves on.
+3. Publishes each scenario event on /sim/event when its time comes (s after localization).
+4. With a scenario duration (or ~duration_s > 0), shuts down when it is reached; launch this node with
+   required="true" so the whole sim stops and sim_monitor writes its summary.
+"""
+
+import math
+import time
+
+import rospy
+import yaml
+from geometry_msgs.msg import Pose2D, PoseStamped
+from std_msgs.msg import Bool, Int32, String
+
+from mattbot_sim.scenario import load_scenario
+from mattbot_sim.world import SimObject
+
+IDLE, LOCALIZING2 = 0, 2
+
+
+def event_yaml(event):
+    e = {k: v for k, v in event.items() if k != "at"}
+    if isinstance(e.get("add"), SimObject):
+        o = e["add"]
+        e["add"] = {"id": o.object_id, "class": o.class_name, "x": o.x, "y": o.y, "width": o.width}
+    return yaml.safe_dump(e, default_flow_style=True).strip()
+
+
+class ScenarioRunner:
+    def __init__(self):
+        rospy.init_node("scenario_runner")
+        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
+        duration = float(rospy.get_param("~duration_s", -1.0))
+        self.duration = duration if duration >= 0.0 else self.scenario.duration
+        self.reach_tol = float(rospy.get_param("~reach_tol_m", 0.5))
+        self.idle_settle_s = float(rospy.get_param("~idle_settle_s", 1.5))
+        self.pause_s = float(rospy.get_param("~pause_at_waypoint_s", 2.0))
+        self.goal_timeout_s = float(rospy.get_param("~goal_timeout_s", 300.0))
+        self.max_retries = int(rospy.get_param("~max_retries", 3))
+
+        self.mode = None
+        self.mode_since = time.time()
+        self.prev_mode = None
+        self.localized = False
+        self.pose = None
+
+        self.goal_pub = rospy.Publisher("/external_goal", Pose2D, queue_size=10)
+        self.event_pub = rospy.Publisher("/sim/event", String, queue_size=10)
+        rospy.Subscriber("/robot_mode", Int32, self.mode_callback, queue_size=10)
+        rospy.Subscriber("/localized", Bool, self.localized_callback, queue_size=1)
+        rospy.Subscriber("/sim/true_pose", PoseStamped, self.pose_callback, queue_size=1)
+
+    def mode_callback(self, msg):
+        if msg.data != self.mode:
+            self.prev_mode, self.mode, self.mode_since = self.mode, msg.data, time.time()
+            if msg.data == IDLE and self.prev_mode == LOCALIZING2:
+                self.localized = True
+
+    def localized_callback(self, msg):
+        self.localized = self.localized or msg.data
+
+    def pose_callback(self, msg):
+        self.pose = (msg.pose.position.x, msg.pose.position.y)
+
+    def idle_for(self):
+        return time.time() - self.mode_since if self.mode == IDLE else 0.0
+
+    def dist_to(self, wp):
+        return math.hypot(self.pose[0] - wp.x, self.pose[1] - wp.y) if self.pose else math.inf
+
+    def run(self):
+        rospy.loginfo("scenario_runner: %s, waiting for the navigator to localize", self.scenario.name)
+        while not rospy.is_shutdown() and not self.localized:
+            rospy.sleep(0.5)
+        t0 = time.time()
+        rospy.loginfo("scenario_runner: localized; starting %d waypoints, %d events%s", len(self.scenario.waypoints),
+                      len(self.scenario.events), ", %.0f s run" % self.duration if self.duration > 0 else "")
+
+        events = list(self.scenario.events)
+        waypoints = self.scenario.waypoints
+        idx, sent_at, retries, laps = 0, None, 0, 0
+        rate = rospy.Rate(5)
+        while not rospy.is_shutdown():
+            elapsed = time.time() - t0
+            while events and events[0]["at"] <= elapsed:
+                e = events.pop(0)
+                rospy.loginfo("scenario_runner: t=%.0f s event: %s", elapsed, event_yaml(e))
+                self.event_pub.publish(String(data=event_yaml(e)))
+            if self.duration > 0 and elapsed >= self.duration:
+                rospy.loginfo("scenario_runner: duration %.0f s reached, ending the run", self.duration)
+                rospy.signal_shutdown("scenario finished")
+                break
+
+            if waypoints and idx is not None:
+                wp = waypoints[idx]
+                if sent_at is None:
+                    self.send(wp, idx)
+                    sent_at = time.time()
+                elif time.time() - sent_at > 3.0 and self.idle_for() > self.idle_settle_s:
+                    if self.dist_to(wp) <= self.reach_tol or retries >= self.max_retries:
+                        if self.dist_to(wp) > self.reach_tol:
+                            rospy.logwarn("scenario_runner: giving up on waypoint %d after %d retries", idx, retries)
+                        rospy.sleep(self.pause_s)
+                        idx, sent_at, retries = idx + 1, None, 0
+                        if idx >= len(waypoints):
+                            laps += 1
+                            idx = 0 if self.scenario.loop else None
+                            rospy.loginfo("scenario_runner: finished lap %d", laps)
+                    else:
+                        retries += 1
+                        rospy.logwarn("scenario_runner: navigator idle %.1f m short of waypoint %d; re-sending (%d/%d)",
+                                      self.dist_to(wp), idx, retries, self.max_retries)
+                        sent_at = None
+                elif time.time() - sent_at > self.goal_timeout_s:
+                    rospy.logwarn("scenario_runner: waypoint %d timed out; re-sending", idx)
+                    sent_at = None
+            rate.sleep()
+
+    def send(self, wp, idx):
+        rospy.loginfo("scenario_runner: goal %d -> (%.2f, %.2f, %.2f)", idx, wp.x, wp.y, wp.theta)
+        self.goal_pub.publish(Pose2D(x=wp.x, y=wp.y, theta=wp.theta))
+
+
+if __name__ == "__main__":
+    ScenarioRunner().run()

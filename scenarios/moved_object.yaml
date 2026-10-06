@@ -1,0 +1,15 @@
+# chair_1 is moved 3 m down the corridor (beyond the ledger's 0.75 m match radius) after 150 s.
+# Expected: the old chair_1 entry is removed by a check, and the chair at its new spot is added as a new object.
+name: moved_object
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: chair_1, class: chair, x: 35.0, y: 19.7, width: 0.4}
+  - {id: cone_1, class: cone, x: 40.0, y: 18.15, width: 0.3}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 900
+events:
+  - {at: 150, move: chair_1, x: 38.0, y: 19.7}

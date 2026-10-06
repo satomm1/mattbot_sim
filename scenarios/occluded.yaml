@@ -1,0 +1,16 @@
+# cone_1 sits just east of bench_1 against the corridor wall, so the bench hides it from much of the
+# western half of the corridor. cone_1 is removed after 150 s; bench_1 stays.
+# Expected: no false removals (occluded windows are INCONCLUSIVE, not ABSENT) and bench_1 is never removed.
+name: occluded
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: bench_1, class: bench, x: 37.3, y: 19.68, width: 0.5}
+  - {id: cone_1, class: cone, x: 38.0, y: 19.78, width: 0.3}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 900
+events:
+  - {at: 150, remove: cone_1}

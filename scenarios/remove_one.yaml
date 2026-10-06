@@ -1,0 +1,17 @@
+# Three objects along the main y2e2 corridor (robot map current_map). The robot patrols the corridor;
+# chair_1 is taken away after 150 s. Expected: the ledger learns all three, later checks re-confirm
+# cone_1 and backpack_1, and a check of chair_1 after the removal reports ABSENT and removes it.
+name: remove_one
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: chair_1, class: chair, x: 35.0, y: 19.7, width: 0.4}
+  - {id: cone_1, class: cone, x: 40.0, y: 18.15, width: 0.3}
+  - {id: backpack_1, class: backpack, x: 43.5, y: 19.75, width: 0.35}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 900
+events:
+  - {at: 150, remove: chair_1}
