@@ -99,11 +99,11 @@ events:                   # s after localization
   - {at: 150, remove: chair_1}
 ```
 
-When you place objects, note that with `enable_depth_occupancy_grid:=false` (the default) the
-`occupancy_grid_mapper` does not republish `/navigation_map` when it confirms an object. So the planner does not
-see object blockouts, and the navigator's `path_still_valid` (which does check `/object_map`) then rejects the path.
-If an object's blockout overlaps the robot's 0.8 m footprint along the planned path, the navigator replans the same path over and over
-("Path no longer valid..."). The shipped scenarios keep objects against the walls to avoid this.
+Objects can be placed anywhere free, including in the robot's path. This needs mattbot_navigation `98ab93a`
+("Fix replan loop when a confirmed object is near the planned path") or later. Before that commit, the planner did not see
+object blockouts, while `path_still_valid` did, so an object whose blockout overlapped the planned path made the navigator
+replan the same path over and over ("Path no longer valid..."). The shipped scenarios keep objects against the walls,
+so they also run on older navigator versions.
 
 ## Results
 
