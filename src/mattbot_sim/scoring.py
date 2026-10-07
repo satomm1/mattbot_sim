@@ -2,7 +2,7 @@
 
 Ground truth is a list of placements (object at a spot over [t_start, t_end)), see world.Placement.
 The ledger side comes from /object_beliefs (active objects with local map positions).
-All times are Unix wall time, as in the ledger. Pure Python (no ROS).
+All times are ROS time (the sim clock with /use_sim_time, else the wall clock), as in the ledger. Pure Python (no ROS).
 """
 
 import math
@@ -285,3 +285,43 @@ def check_expectations(summary, expect):
             ok = actual == expected
         out.append({"key": key, "op": op, "expected": expected, "actual": actual, "ok": bool(ok)})
     return out
+
+
+# ---------- Loop rates (can the stack keep up with simulated time?) ----------
+
+
+@dataclass
+class RateTracker:
+    """Message rate in (simulated) time, overall and per window: with sim_world's ~speed > 1, a node that
+    cannot keep up publishes less often per simulated second, and the run no longer reflects the robot."""
+
+    nominal_hz: float
+    window_s: float = 10.0
+    stamps: List[float] = field(default_factory=list)
+
+    def tick(self, t):
+        self.stamps.append(t)
+
+    def summary(self):
+        if len(self.stamps) < 2:
+            return {"nominal_hz": self.nominal_hz, "mean_hz": None, "min_window_hz": None}
+        t0, t1 = self.stamps[0], self.stamps[-1]
+        mean = (len(self.stamps) - 1) / max(t1 - t0, 1e-9)
+        windows = []
+        k = 0
+        start = t0
+        while start + self.window_s <= t1:
+            n = 0
+            while k < len(self.stamps) and self.stamps[k] < start + self.window_s:
+                if self.stamps[k] >= start:
+                    n += 1
+                k += 1
+            windows.append(n / self.window_s)
+            start += self.window_s
+        return {"nominal_hz": self.nominal_hz, "mean_hz": round(mean, 2),
+                "min_window_hz": round(min(windows), 2) if windows else None}
+
+    def ok(self, fraction=0.9):
+        """Mean rate within ``fraction`` of nominal (None if too few messages to tell)."""
+        mean = self.summary()["mean_hz"]
+        return None if mean is None else mean >= fraction * self.nominal_hz

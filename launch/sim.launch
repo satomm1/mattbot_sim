@@ -46,7 +46,11 @@
   <arg name="observe_detour_timeout_factor" default="2.0"/>
   <arg name="roadmap_cache_dir" default="$(env HOME)/.ros/mattbot_roadmap"/>
 
-  <param name="/use_sim_time" value="false"/>
+  <!-- Simulated time: sim_world publishes /clock and runs it at speed x real time (all nodes follow ROS time).
+       Raise speed until sim_monitor's loop_rates stop keeping up; sim_time:=false runs on the wall clock. -->
+  <arg name="sim_time" default="true"/>
+  <arg name="speed" default="1.0"/>
+  <param name="/use_sim_time" value="$(arg sim_time)"/>
   <param name="/sim/scenario_file" value="$(arg scenario_file)"/>
   <!-- RViz config served from the master, so a remote viewer needs no copy of this package (scripts/sim_rviz.sh) -->
   <param name="/sim/rviz_config" textfile="$(find mattbot_sim)/rviz/sim.rviz"/>
@@ -61,6 +65,7 @@
     <param name="pos_noise_std" value="$(arg pos_noise_std)"/>
     <param name="false_pos_rate" value="$(arg false_pos_rate)"/>
     <param name="detect_hz" value="$(arg detect_hz)"/>
+    <param name="speed" value="$(arg speed)"/>
     <param name="urdf" value="$(find mattbot_bringup)/urdf/robot_tf_short.urdf"/>
   </node>
   <node pkg="mattbot_sim" type="sim_amcl_stub.py" name="amcl" output="log"/>
@@ -109,5 +114,6 @@
   </node>
   <node pkg="mattbot_sim" type="sim_monitor.py" name="sim_monitor" output="screen">
     <param name="results_dir" value="$(arg results_dir)"/>
+    <param name="detect_hz" value="$(arg detect_hz)"/>
   </node>
 </launch>

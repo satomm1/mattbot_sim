@@ -12,6 +12,13 @@ Also:     /initialpose   latched start pose, so the navigator leaves WAITING_FOR
           /sim/event     std_msgs/String YAML world event, e.g. "remove: chair_1" (see scenario.py)
           /sim/ground_truth  latched JSON placements, for sim_monitor
           /sim/objects   MarkerArray (green = present, grey = removed), /sim/true_pose
+
+Simulated time: with /use_sim_time, sim_world is the clock. A wall-paced thread advances /clock by a
+fixed physics step (1/~rate_hz) every step / ~speed wall seconds, starting at the current Unix time
+(so stamps, ledger sessions and logs still look like wall time). Everything else in the stack runs on
+ROS time and follows it; ~speed > 1 runs the scenario faster than real time as long as the nodes keep
+up (sim_monitor checks the navigator and detector rates). Without /use_sim_time it runs on the wall
+clock as before.
 """
 
 import json
@@ -30,6 +37,7 @@ import yaml
 from geometry_msgs.msg import Pose, PoseStamped, PoseWithCovarianceStamped, TransformStamped, Twist
 from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray
 from nav_msgs.msg import MapMetaData, OccupancyGrid, Odometry
+from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import CameraInfo, LaserScan
 from std_msgs.msg import String
 from tf.transformations import quaternion_from_euler
@@ -97,12 +105,24 @@ class SimWorld:
     def __init__(self):
         rospy.init_node("sim_world")
         self.check_no_hardware()
+        self.sim_time = bool(rospy.get_param("/use_sim_time", False))
+        self.speed = float(rospy.get_param("~speed", 1.0))
+        self.dt = 1.0 / float(rospy.get_param("~rate_hz", 50.0))
+        if self.sim_time:
+            if self.speed <= 0.0:
+                raise SystemExit("sim_world: ~speed must be > 0")
+            # Start the clock before anything reads ROS time (it is 0 until the first /clock)
+            self.clock_pub = rospy.Publisher("/clock", Clock, queue_size=10)
+            self.t_sim = time.time()  # wall clock: the sim clock starts at the current Unix time
+            while not rospy.is_shutdown() and rospy.get_time() <= 0.0:
+                self.clock_pub.publish(Clock(clock=rospy.Time.from_sec(self.t_sim)))
+                time.sleep(0.05)  # wall clock: waiting for our own first /clock to arrive
 
         rospack = rospkg.RosPack()
         self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
         map_json_dir = os.path.join(rospack.get_path("mattbot_mcl"), "map_json")
         self.grid, self.grid_mod = load_maps(self.scenario.map, map_json_dir)
-        self.world = World(self.grid, self.scenario.objects, now=time.time())
+        self.world = World(self.grid, self.scenario.objects, now=rospy.get_time())
 
         urdf = rospy.get_param("~urdf", os.path.join(rospack.get_path("mattbot_bringup"), "urdf", "robot_tf_short.urdf"))
         self.cam_offset = frame_offset(urdf, "camera_link")
@@ -132,7 +152,7 @@ class SimWorld:
         self.v = self.w = 0.0
         self.last_cmd = -math.inf
         self.turn_gate = TurnGate()
-        self.last_step = time.time()
+        self.last_step = rospy.get_time()
 
         latched = dict(queue_size=1, latch=True)
         self.tf_pub = tf2_ros.TransformBroadcaster()
@@ -159,15 +179,19 @@ class SimWorld:
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/sim/event", String, self.event_callback, queue_size=10)
 
-        rospy.Timer(rospy.Duration(1.0 / float(rospy.get_param("~rate_hz", 50.0))), self.physics_step)
+        if self.sim_time:
+            threading.Thread(target=self.clock_loop, name="sim_clock", daemon=True).start()
+        else:
+            rospy.Timer(rospy.Duration(self.dt), self.physics_timer)
         rospy.Timer(rospy.Duration(1.0 / float(rospy.get_param("~detect_hz", 5.0))), self.detect_step)
         rospy.Timer(rospy.Duration(0.1), self.publish_truth)
         rospy.Timer(rospy.Duration(1.0), self.world_state_timer)
         if rospy.get_param("~scan", False):
             rospy.Timer(rospy.Duration(0.1), self.scan_step)
-        rospy.loginfo("sim_world: scenario %s, map %s (%dx%d), %d objects, start (%.2f, %.2f, %.2f)",
+        rospy.loginfo("sim_world: scenario %s, map %s (%dx%d), %d objects, start (%.2f, %.2f, %.2f)%s",
                       self.scenario.name, self.scenario.map, self.grid.width, self.grid.height,
-                      len(self.scenario.objects), self.truth.x, self.truth.y, self.truth.theta)
+                      len(self.scenario.objects), self.truth.x, self.truth.y, self.truth.theta,
+                      ", simulated time at %gx" % self.speed if self.sim_time else ", wall clock")
 
     @staticmethod
     def check_no_hardware():
@@ -199,14 +223,14 @@ class SimWorld:
         with self.lock:
             self.v = clamp(msg.linear.x, -self.limits.v_max, self.limits.v_max)
             self.w = clamp(msg.angular.z, -self.limits.w_max, self.limits.w_max)
-            self.last_cmd = time.time()
+            self.last_cmd = rospy.get_time()
             self.turn_gate.update(msg.angular.z, self.last_cmd)
 
     def event_callback(self, msg):
         try:
             event = parse_event(yaml.safe_load(msg.data))
             with self.lock:
-                desc = self.world.apply_event(event, time.time())
+                desc = self.world.apply_event(event, rospy.get_time())
         except (ValueError, yaml.YAMLError) as e:
             rospy.logerr("sim_world: bad /sim/event %r: %s", msg.data, e)
             return
@@ -215,12 +239,40 @@ class SimWorld:
 
     # ---------- Motion ----------
 
+    def clock_loop(self):
+        """Simulated time: fixed physics steps, /clock published after each, paced to ~speed x wall time."""
+        wall_next = time.time()  # wall clock: pacing
+        report_sim, report_wall = self.t_sim, time.time()  # wall clock: achieved-speed report
+        while not rospy.is_shutdown():
+            self.t_sim += self.dt
+            try:
+                self.physics_step(self.t_sim, self.dt)
+                self.clock_pub.publish(Clock(clock=rospy.Time.from_sec(self.t_sim)))
+            except rospy.ROSException:
+                if rospy.core.is_shutdown_requested():
+                    return  # topics close before is_shutdown() turns true
+                raise
+            wall_next += self.dt / self.speed
+            delay = wall_next - time.time()  # wall clock: pacing
+            if delay > 0.0:
+                time.sleep(delay)  # wall clock: pacing
+            elif delay < -1.0:
+                wall_next = time.time()  # wall clock: fell behind; do not try to catch up in a burst
+            if self.t_sim - report_sim >= 30.0:
+                wall = time.time()  # wall clock: achieved-speed report
+                rospy.loginfo("sim_world: simulated time at %.2fx (asked %gx)",
+                              (self.t_sim - report_sim) / max(wall - report_wall, 1e-6), self.speed)
+                report_sim, report_wall = self.t_sim, wall
+
     @timer_callback
-    def physics_step(self, _event):
-        now = time.time()
+    def physics_timer(self, _event):
+        now = rospy.get_time()
+        dt = min(now - self.last_step, 0.1)
+        self.last_step = now
+        self.physics_step(now, dt)
+
+    def physics_step(self, now, dt):
         with self.lock:
-            dt = min(now - self.last_step, 0.1)
-            self.last_step = now
             if now - self.last_cmd > CMD_TIMEOUT_S:
                 self.v = self.w = 0.0
             v, w = self.v, self.w
@@ -244,7 +296,7 @@ class SimWorld:
                 self.odom = compose(inverse(self.odom_origin), self.truth)
             odom, origin = self.odom, self.odom_origin
 
-        stamp = rospy.Time.now()
+        stamp = rospy.Time.from_sec(now)
         self.tf_pub.sendTransform([
             self.transform(stamp, "map", "odom", origin),
             self.transform(stamp, "odom", "base_footprint", odom),
@@ -281,7 +333,7 @@ class SimWorld:
 
     @timer_callback
     def detect_step(self, _event):
-        now = time.time()
+        now = rospy.get_time()
         stamp = rospy.Time.now()
         info = CameraInfo()
         info.header.stamp = stamp

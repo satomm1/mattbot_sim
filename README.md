@@ -37,6 +37,8 @@ Useful launch args:
 | Arg | Default | |
 |---|---|---|
 | `scenario` | `remove_one` | file in `scenarios/` (or `scenario_file:=/abs/path.yaml`) |
+| `speed` | `1` | run faster than real time (see [Faster than real time](#faster-than-real-time)) |
+| `sim_time` | `true` | `false` runs on the wall clock (`speed` is then ignored) |
 | `duration` | `-1` | run length in s after localization; `-1` = scenario's value, `0` = until Ctrl-C |
 | `belief_hold_s`, `belief_decay_s` | `20`, `40` | faster than the robot defaults (60, 120) so checks happen within minutes |
 | `observe_cooldown_s` | `60` | per-object re-check cooldown in the planner (robot default 120) |
@@ -47,6 +49,30 @@ Useful launch args:
 | `roadmap_cache_dir` | `~/.ros/mattbot_roadmap` | observation_planner's roadmap / importance cache |
 | `miss_prob`, `pos_noise_std`, `false_pos_rate` | `0` | make the detector imperfect (per-object miss probability, metres, expected false detections per frame) |
 | `scan` | `false` | publish a simulated lidar scan for RViz |
+
+### Faster than real time
+
+The sim runs on simulated time: `sim_world` publishes `/clock` and sets `/use_sim_time`. Every node
+follows ROS time: the navigator, planner, evaluator, ledger, belief map and the sim nodes. The scenario's
+times, the belief decay and the cooldowns are all in simulated seconds, so `speed:=4` runs a scenario
+in about a quarter of the time with the same behaviour:
+
+```bash
+roslaunch mattbot_sim sim.launch scenario:=detour_present observe_detour:=true speed:=4
+```
+
+This only holds while the nodes keep up, because every loop still does its full work. `sim_monitor`
+measures the navigator's control rate (nominal 10 Hz) and the detector rate (5 Hz) per simulated second.
+It reports them as `loop_rates` and `loop_rates_ok` in the summary. If they drop below 90 % of nominal,
+it logs a warning and the run's expectations FAIL (`loop_rates_ok`). In that case lower `speed`.
+`sim_world` also logs the speed it actually achieves every 30 simulated seconds. `run_s` is in simulated
+seconds and `run_wall_s` in wall seconds.
+
+Runs on separate ROS masters (`roslaunch -p <port>` with a matching `ROS_MASTER_URI`) can also go in parallel.
+
+Robot code reads the time with `rospy.get_time()`, which is the wall clock on the robots. A
+`time.time()` call is only allowed with a `# wall clock: <why>` comment, for compute budgets, CPU throttles
+and pacing the sim clock. `test/test_wall_clock.py` enforces this for the nodes the sim runs.
 
 ### Change the world while it runs
 
@@ -172,6 +198,7 @@ it while patrolling. `test/test_detour_scenarios.py` runs the same check on ever
 - `blockouts_still_present` / `blockout_clear_after_s`: whether the mapper's `/object_map` blockout cleared after a ledger removal (today it only expires by TTL)
 - `observation_stops_by_kind` / `observation_outcomes_by_kind` (OPPORTUNISTIC / DETOUR), and `detour_stops` (DETOUR stops ENDED). The `stops` list in the JSON has every stop event with the robot's position.
 - `detours_started` / `detours_reached` / `detours_done` / `detours_abandoned` / `detours_cancelled`, plus `detour_abandon_reasons`. These are read from the navigator's log on `/rosout_agg`, because abandoned and cancelled detours publish no ObservationEvent.
+- `run_s` / `run_wall_s` (simulated / wall seconds) and `loop_rates` / `loop_rates_ok`: whether the stack kept up with simulated time. A scenario with `expect:` also gets a `loop_rates_ok` check.
 - `goal_resends` / `goals_given_up`: how often `scenario_runner` had to re-send a goal because the navigator went idle short of it. A re-send can hide a navigator that never replanned, for example after a detour.
 
 A scenario's optional `expect:` block is checked at the end of the run. The summary prints PASS/FAIL per key and stores it under `summary.expectations`. Keys are summary fields, with dotted paths for nested ones and lists counted by length. An optional `min_` / `max_` prefix turns the check into a lower or upper bound; without a prefix it checks equality:

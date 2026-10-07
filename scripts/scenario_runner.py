@@ -23,6 +23,7 @@ import yaml
 from geometry_msgs.msg import Pose2D, PoseStamped
 from std_msgs.msg import Bool, Int32, String
 
+from mattbot_sim.clock import wait_for_clock
 from mattbot_sim.peers import peer_messages
 from mattbot_sim.scenario import load_scenario
 from mattbot_sim.world import SimObject
@@ -41,6 +42,7 @@ def event_yaml(event):
 class ScenarioRunner:
     def __init__(self):
         rospy.init_node("scenario_runner")
+        wait_for_clock()  # all times here are ROS time (simulated with /use_sim_time)
         self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
         duration = float(rospy.get_param("~duration_s", -1.0))
         self.duration = duration if duration >= 0.0 else self.scenario.duration
@@ -51,7 +53,7 @@ class ScenarioRunner:
         self.max_retries = int(rospy.get_param("~max_retries", 3))
 
         self.mode = None
-        self.mode_since = time.time()
+        self.mode_since = rospy.get_time()
         self.prev_mode = None
         self.localized = False
         self.pose = None
@@ -66,7 +68,7 @@ class ScenarioRunner:
 
     def mode_callback(self, msg):
         if msg.data != self.mode:
-            self.prev_mode, self.mode, self.mode_since = self.mode, msg.data, time.time()
+            self.prev_mode, self.mode, self.mode_since = self.mode, msg.data, rospy.get_time()
             if msg.data == IDLE and self.prev_mode == LOCALIZING2:
                 self.localized = True
 
@@ -77,7 +79,7 @@ class ScenarioRunner:
         self.pose = (msg.pose.position.x, msg.pose.position.y)
 
     def idle_for(self):
-        return time.time() - self.mode_since if self.mode == IDLE else 0.0
+        return rospy.get_time() - self.mode_since if self.mode == IDLE else 0.0
 
     def dist_to(self, wp):
         return math.hypot(self.pose[0] - wp.x, self.pose[1] - wp.y) if self.pose else math.inf
@@ -86,7 +88,7 @@ class ScenarioRunner:
         rospy.loginfo("scenario_runner: %s, waiting for the navigator to localize", self.scenario.name)
         while not rospy.is_shutdown() and not self.localized:
             rospy.sleep(0.5)
-        t0 = time.time()
+        t0 = rospy.get_time()
         self.seed_peer_objects(t0)
         rospy.loginfo("scenario_runner: localized; starting %d waypoints, %d events%s", len(self.scenario.waypoints),
                       len(self.scenario.events), ", %.0f s run" % self.duration if self.duration > 0 else "")
@@ -96,7 +98,7 @@ class ScenarioRunner:
         idx, sent_at, retries, laps = 0, None, 0, 0
         rate = rospy.Rate(5)
         while not rospy.is_shutdown():
-            elapsed = time.time() - t0
+            elapsed = rospy.get_time() - t0
             while events and events[0]["at"] <= elapsed:
                 e = events.pop(0)
                 rospy.loginfo("scenario_runner: t=%.0f s event: %s", elapsed, event_yaml(e))
@@ -110,8 +112,8 @@ class ScenarioRunner:
                 wp = waypoints[idx]
                 if sent_at is None:
                     self.send(wp, idx)
-                    sent_at = time.time()
-                elif time.time() - sent_at > 3.0 and self.idle_for() > self.idle_settle_s:
+                    sent_at = rospy.get_time()
+                elif rospy.get_time() - sent_at > 3.0 and self.idle_for() > self.idle_settle_s:
                     if self.dist_to(wp) <= self.reach_tol or retries >= self.max_retries:
                         if self.dist_to(wp) > self.reach_tol:
                             rospy.logwarn("scenario_runner: giving up on waypoint %d after %d retries", idx, retries)
@@ -128,7 +130,7 @@ class ScenarioRunner:
                                       self.dist_to(wp), idx, retries, self.max_retries)
                         self.runner_event("resend goal %d %.1f m short" % (idx, self.dist_to(wp)))
                         sent_at = None
-                elif time.time() - sent_at > self.goal_timeout_s:
+                elif rospy.get_time() - sent_at > self.goal_timeout_s:
                     rospy.logwarn("scenario_runner: waypoint %d timed out; re-sending", idx)
                     self.runner_event("resend goal %d timed out" % idx)
                     sent_at = None
@@ -142,12 +144,12 @@ class ScenarioRunner:
         objects = [o for o in self.scenario.objects if o.object_id in ids]
         if not objects:
             return
-        deadline = time.time() + 10.0
-        while not rospy.is_shutdown() and self.peer_pub.get_num_connections() == 0 and time.time() < deadline:
+        deadline = rospy.get_time() + 10.0
+        while not rospy.is_shutdown() and self.peer_pub.get_num_connections() == 0 and rospy.get_time() < deadline:
             rospy.sleep(0.2)  # messages published before the ledger connects are lost
         if self.peer_pub.get_num_connections() == 0:
             rospy.logwarn("scenario_runner: no subscriber on /ledger/observation_from_agent; is observation_ledger running?")
-        for o, msg in zip(objects, peer_messages(objects, self.scenario.peer_id, int(t0), time.time())):
+        for o, msg in zip(objects, peer_messages(objects, self.scenario.peer_id, int(t0), rospy.get_time())):
             rospy.loginfo("scenario_runner: peer %d reports %s (%s) at (%.2f, %.2f)",
                           self.scenario.peer_id, o.object_id, o.class_name, o.x, o.y)
             self.peer_pub.publish(String(data=msg))

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from mattbot_sim.scenario import load_scenario, parse_event
-from mattbot_sim.scoring import RunScorer, check_expectations, kind_name
+from mattbot_sim.scoring import RateTracker, RunScorer, check_expectations, kind_name
 
 SCENARIOS = os.path.join(os.path.dirname(__file__), "..", "scenarios")
 
@@ -159,3 +159,15 @@ def test_check_expectations():
     assert checks["min_observation_outcomes_by_kind.DETOUR.ABSENT"]["ok"]
     assert not checks["removal_latency_s"]["ok"]  # None is never a pass
     assert not checks["nope"]["ok"] and "error" in checks["nope"]
+
+
+def test_rate_tracker():
+    r = RateTracker(10.0, window_s=5.0)
+    assert r.ok() is None and r.summary()["mean_hz"] is None
+    for k in range(101):  # 10 Hz for 10 s
+        r.tick(100.0 + 0.1 * k)
+    assert r.summary()["mean_hz"] == pytest.approx(10.0) and r.ok()
+    slow = RateTracker(10.0, window_s=5.0)
+    for k in range(51):  # 5 Hz: the node did not keep up
+        slow.tick(100.0 + 0.2 * k)
+    assert slow.ok() is False and slow.summary()["min_window_hz"] == pytest.approx(5.0)
