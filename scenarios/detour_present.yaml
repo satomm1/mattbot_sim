@@ -1,0 +1,27 @@
+# A cone that no point of the patrol path can see, in the passage north of the corridor's west end
+# (it blocks that passage, so its importance I_o is high: about 9 m). The ledger learns it from a peer
+# robot at the start. Once its belief has decayed, the planner should send the robot on a detour of about
+# 8 m (viewpoint near (26.1, 21.5)) at the west end of the patrol; the check reports PRESENT and the
+# robot replans back to its goal. cone_1 in the corridor is the opportunistic control.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=detour_present observe_detour:=true
+# Offline: rosrun mattbot_sim check_detour_scenario.py $(rospack find mattbot_sim)/scenarios/detour_present.yaml
+name: detour_present
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true, detour: expected}
+  - {id: cone_1, class: cone, x: 40.0, y: 18.15, width: 0.3}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 600
+expect:
+  min_detour_stops: 1
+  min_observation_outcomes_by_kind.DETOUR.PRESENT: 1
+  observation_outcomes_by_kind.DETOUR.ABSENT: 0
+  min_observation_outcomes_by_kind.OPPORTUNISTIC.PRESENT: 1
+  false_removals: 0
+  wrong_observation_outcomes: 0
+  detours_abandoned: 0
+  goal_resends: 0

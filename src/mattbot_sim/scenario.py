@@ -16,13 +16,24 @@
       - {at: 400, move: chair_1, x: 36.5, y: 19.6}
       - {at: 450, add: {id: cone_2, class: cone, x: 40.0, y: 18.3, width: 0.3}}
 
+Optional, for detour tests:
+
+    peer_id: 98                   # observer id of the simulated peer robot (default 98)
+    objects:
+      - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4,
+         known_from_peer: true,   # put it in the ledger at start, as if peer_id had seen it
+         detour: expected}        # offline check (check_detour_scenario.py): expected | declined
+    expect:                       # checked by sim_monitor at the end of the run (scoring.check_expectations)
+      min_detour_stops: 1         # min_<field> / max_<field> / <field> (==) on summary fields
+      false_removals: 0
+
 The same event dicts (without ``at``) can be sent at runtime as YAML on /sim/event.
 Pure Python (no ROS).
 """
 
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 import yaml
 
@@ -30,6 +41,8 @@ from mattbot_sim.kinematics import Pose2D
 from mattbot_sim.world import SimObject
 
 ACTIONS = ("remove", "restore", "move", "add")
+DETOUR_ANNOTATIONS = ("expected", "declined")
+DEFAULT_PEER_ID = 98
 
 
 def parse_object(d):
@@ -78,6 +91,10 @@ class Scenario:
     loop: bool = True
     duration: float = 0.0
     events: List[dict] = field(default_factory=list)
+    peer_id: int = DEFAULT_PEER_ID
+    known_from_peer: List[str] = field(default_factory=list)  # object ids seeded into the ledger at start
+    detour: Dict[str, str] = field(default_factory=dict)  # object_id -> "expected" | "declined"
+    expect: Dict[str, float] = field(default_factory=dict)  # see scoring.check_expectations
 
 
 def load_scenario(path):
@@ -94,6 +111,17 @@ def load_scenario(path):
     for e in events:
         if "at" not in e:
             raise ValueError("%s: scenario event %r needs 'at'" % (path, e))
+    raw = d.get("objects", [])
+    known_from_peer = [str(o["id"]) for o in raw if o.get("known_from_peer", False)]
+    detour = {}
+    for o in raw:
+        if "detour" in o:
+            if o["detour"] not in DETOUR_ANNOTATIONS:
+                raise ValueError("%s: object %s: detour must be one of %s" % (path, o["id"], ", ".join(DETOUR_ANNOTATIONS)))
+            detour[str(o["id"])] = str(o["detour"])
+    expect = d.get("expect", {}) or {}
+    if not isinstance(expect, dict):
+        raise ValueError("%s: expect must be a mapping" % path)
     return Scenario(
         name=str(d.get("name", os.path.splitext(os.path.basename(path))[0])),
         map=str(d["map"]),
@@ -103,4 +131,8 @@ def load_scenario(path):
         loop=bool(d.get("loop", True)),
         duration=float(d.get("duration", 0.0)),
         events=events,
+        peer_id=int(d.get("peer_id", DEFAULT_PEER_ID)),
+        known_from_peer=known_from_peer,
+        detour=detour,
+        expect={str(k): float(v) for k, v in expect.items()},
     )

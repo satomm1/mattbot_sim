@@ -1,0 +1,18 @@
+# A cone hidden in the dead-end room south of the corridor's east end. Nothing routes through the room,
+# so blocking it costs no trip anything (I_o ~ 0) and a detour is never worth it: the planner must decline.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=detour_not_worth_it observe_detour:=true
+name: detour_not_worth_it
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_8, class: cone, x: 44.0, y: 15.0, width: 0.4, known_from_peer: true, detour: declined}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 400
+expect:
+  detours_started: 0
+  detour_stops: 0
+  false_removals: 0
+  goal_resends: 0

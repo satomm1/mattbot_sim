@@ -8,6 +8,11 @@
 3. Publishes each scenario event on /sim/event when its time comes (s after localization).
 4. With a scenario duration (or ~duration_s > 0), shuts down when it is reached; launch this node with
    required="true" so the whole sim stops and sim_monitor writes its summary.
+
+Objects marked known_from_peer are put in the ledger right after localization, as observations of the
+scenario's peer robot on /ledger/observation_from_agent (mattbot_sim/peers.py).
+Goal re-sends and give-ups are also published on /sim/runner_event (String) so sim_monitor can count
+them: a re-send can hide a navigator that went IDLE without reaching the goal (e.g. after a detour).
 """
 
 import math
@@ -18,6 +23,7 @@ import yaml
 from geometry_msgs.msg import Pose2D, PoseStamped
 from std_msgs.msg import Bool, Int32, String
 
+from mattbot_sim.peers import peer_messages
 from mattbot_sim.scenario import load_scenario
 from mattbot_sim.world import SimObject
 
@@ -52,6 +58,8 @@ class ScenarioRunner:
 
         self.goal_pub = rospy.Publisher("/external_goal", Pose2D, queue_size=10)
         self.event_pub = rospy.Publisher("/sim/event", String, queue_size=10)
+        self.runner_pub = rospy.Publisher("/sim/runner_event", String, queue_size=10)
+        self.peer_pub = rospy.Publisher("/ledger/observation_from_agent", String, queue_size=50)
         rospy.Subscriber("/robot_mode", Int32, self.mode_callback, queue_size=10)
         rospy.Subscriber("/localized", Bool, self.localized_callback, queue_size=1)
         rospy.Subscriber("/sim/true_pose", PoseStamped, self.pose_callback, queue_size=1)
@@ -79,6 +87,7 @@ class ScenarioRunner:
         while not rospy.is_shutdown() and not self.localized:
             rospy.sleep(0.5)
         t0 = time.time()
+        self.seed_peer_objects(t0)
         rospy.loginfo("scenario_runner: localized; starting %d waypoints, %d events%s", len(self.scenario.waypoints),
                       len(self.scenario.events), ", %.0f s run" % self.duration if self.duration > 0 else "")
 
@@ -106,6 +115,7 @@ class ScenarioRunner:
                     if self.dist_to(wp) <= self.reach_tol or retries >= self.max_retries:
                         if self.dist_to(wp) > self.reach_tol:
                             rospy.logwarn("scenario_runner: giving up on waypoint %d after %d retries", idx, retries)
+                            self.runner_event("give_up goal %d %.1f m short" % (idx, self.dist_to(wp)))
                         rospy.sleep(self.pause_s)
                         idx, sent_at, retries = idx + 1, None, 0
                         if idx >= len(waypoints):
@@ -116,11 +126,32 @@ class ScenarioRunner:
                         retries += 1
                         rospy.logwarn("scenario_runner: navigator idle %.1f m short of waypoint %d; re-sending (%d/%d)",
                                       self.dist_to(wp), idx, retries, self.max_retries)
+                        self.runner_event("resend goal %d %.1f m short" % (idx, self.dist_to(wp)))
                         sent_at = None
                 elif time.time() - sent_at > self.goal_timeout_s:
                     rospy.logwarn("scenario_runner: waypoint %d timed out; re-sending", idx)
+                    self.runner_event("resend goal %d timed out" % idx)
                     sent_at = None
             rate.sleep()
+
+    def runner_event(self, text):
+        self.runner_pub.publish(String(data=text))
+
+    def seed_peer_objects(self, t0):
+        ids = set(self.scenario.known_from_peer)
+        objects = [o for o in self.scenario.objects if o.object_id in ids]
+        if not objects:
+            return
+        deadline = time.time() + 10.0
+        while not rospy.is_shutdown() and self.peer_pub.get_num_connections() == 0 and time.time() < deadline:
+            rospy.sleep(0.2)  # messages published before the ledger connects are lost
+        if self.peer_pub.get_num_connections() == 0:
+            rospy.logwarn("scenario_runner: no subscriber on /ledger/observation_from_agent; is observation_ledger running?")
+        for o, msg in zip(objects, peer_messages(objects, self.scenario.peer_id, int(t0), time.time())):
+            rospy.loginfo("scenario_runner: peer %d reports %s (%s) at (%.2f, %.2f)",
+                          self.scenario.peer_id, o.object_id, o.class_name, o.x, o.y)
+            self.peer_pub.publish(String(data=msg))
+            rospy.sleep(0.05)
 
     def send(self, wp, idx):
         rospy.loginfo("scenario_runner: goal %d -> (%.2f, %.2f, %.2f)", idx, wp.x, wp.y, wp.theta)

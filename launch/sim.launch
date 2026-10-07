@@ -30,10 +30,21 @@
   <arg name="belief_hold_s" default="20.0"/>
   <arg name="belief_decay_s" default="40.0"/>
   <arg name="observe_dwell_s" default="4.0"/>
-  <arg name="observe_check_below_belief" default="0.5"/>
+  <arg name="observe_check_below_belief" default="1.0"/>
   <arg name="observe_cooldown_s" default="60.0"/>
   <arg name="observe_min_absent_frames" default="8"/>
   <arg name="cruising_velocity" default="0.40"/>
+
+  <!-- Detours: leave the path to check ledger objects no path point can see (observation_planner decides,
+       the navigator drives it). Off by default; the detour_* scenarios need observe_detour:=true. -->
+  <arg name="observe_detour" default="false"/>
+  <arg name="observe_max_detour_m" default="15.0"/>
+  <arg name="observe_detour_n_trips" default="5"/>
+  <arg name="observe_detour_margin_m" default="0.0"/>
+  <arg name="observe_landmarks_file" default=""/>
+  <!-- Navigator detour deadline: timeout_factor * estimated cost + 20 s -->
+  <arg name="observe_detour_timeout_factor" default="2.0"/>
+  <arg name="roadmap_cache_dir" default="$(env HOME)/.ros/mattbot_roadmap"/>
 
   <param name="/use_sim_time" value="false"/>
   <param name="/sim/scenario_file" value="$(arg scenario_file)"/>
@@ -67,9 +78,16 @@
     <arg name="observe_dwell_s" value="$(arg observe_dwell_s)"/>
     <arg name="observe_check_below_belief" value="$(arg observe_check_below_belief)"/>
     <arg name="cruising_velocity" value="$(arg cruising_velocity)"/>
+    <arg name="observe_detour" value="$(arg observe_detour)"/>
+    <arg name="observe_max_detour_m" value="$(arg observe_max_detour_m)"/>
+    <arg name="observe_detour_n_trips" value="$(arg observe_detour_n_trips)"/>
+    <arg name="observe_detour_margin_m" value="$(arg observe_detour_margin_m)"/>
+    <arg name="observe_landmarks_file" value="$(arg observe_landmarks_file)"/>
   </include>
-  <!-- Not exposed by the navigation launch; the node's private param is set from here -->
+  <!-- Not exposed by the navigation launch; the nodes' private params are set from here -->
   <param name="observation_planner/cooldown_s" value="$(arg observe_cooldown_s)"/>
+  <param name="observation_planner/roadmap_cache_dir" value="$(arg roadmap_cache_dir)"/>
+  <param name="navigator_node/observe_detour_timeout_factor" value="$(arg observe_detour_timeout_factor)"/>
 
   <node if="$(arg observe)" name="observation_evaluator" pkg="mattbot_image_detection" type="observation_evaluator.py" output="screen">
     <param name="tall" value="false"/>

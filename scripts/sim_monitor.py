@@ -2,9 +2,11 @@
 """Scores a sim run: compares the ledger and the observation outcomes with the ground truth.
 
 Inputs: /sim/ground_truth (sim_world), /object_beliefs (active ledger objects), /observation/events,
-        /observation/results, /object_map (occupancy_grid_mapper's object blockouts)
-Logs each scored event and, on shutdown, prints a summary and writes it to
-~results_dir/<scenario>_<time>.json (summary + event log).
+        /observation/results, /object_map (occupancy_grid_mapper's object blockouts),
+        /sim/runner_event (scenario_runner goal re-sends), /rosout_agg (navigator detour log lines:
+        abandons and cancels publish no ObservationEvent)
+Logs each scored event and, on shutdown, prints a summary (with the scenario's ``expect:`` checks) and
+writes it to ~results_dir/<scenario>_<time>.json (summary + event log).
 """
 
 import json
@@ -15,10 +17,11 @@ import numpy as np
 import rospy
 from mattbot_dds.msg import ObjectBeliefArray, ObservationEvent, ObservationResult
 from nav_msgs.msg import OccupancyGrid
+from rosgraph_msgs.msg import Log
 from std_msgs.msg import String
 
 from mattbot_sim.scenario import load_scenario
-from mattbot_sim.scoring import OUTCOMES, RunScorer
+from mattbot_sim.scoring import OUTCOMES, RunScorer, check_expectations, kind_name
 
 EVENT_NAMES = {ObservationEvent.STARTED: "STARTED", ObservationEvent.ENDED: "ENDED", ObservationEvent.ABORTED: "ABORTED"}
 
@@ -38,6 +41,9 @@ class SimMonitor:
         rospy.Subscriber("/observation/events", ObservationEvent, self.stop_callback, queue_size=50)
         rospy.Subscriber("/observation/results", ObservationResult, self.result_callback, queue_size=50)
         rospy.Subscriber("/object_map", OccupancyGrid, self.object_map_callback, queue_size=1)
+        rospy.Subscriber("/sim/runner_event", String, self.runner_callback, queue_size=10)
+        self.navigator_name = rospy.get_param("~navigator_node", "/navigator_node")
+        rospy.Subscriber("/rosout_agg", Log, self.rosout_callback, queue_size=200)
         rospy.on_shutdown(self.write_summary)
 
     def note(self, line):
@@ -55,11 +61,20 @@ class SimMonitor:
 
     def stop_callback(self, msg):
         name = EVENT_NAMES.get(msg.event, str(msg.event))
-        self.scorer.add_stop_event(name)
-        if msg.event == ObservationEvent.STARTED:
-            self.note("observation stop STARTED for %s at %.1f m" % (msg.object_id, msg.distance))
-        elif msg.event == ObservationEvent.ABORTED:
-            self.note("observation stop ABORTED for %s" % msg.object_id)
+        line = self.scorer.add_stop_event(name, kind_name(msg.kind), msg.object_id, time.time(),
+                                          robot_xy=(msg.x, msg.y), distance=msg.distance)
+        if line:
+            self.note(line)
+
+    def runner_callback(self, msg):
+        self.note(self.scorer.add_runner_event(msg.data))
+
+    def rosout_callback(self, msg):
+        if msg.name != self.navigator_name:
+            return
+        line = self.scorer.add_nav_log(msg.msg)
+        if line:
+            self.note(line)
 
     def result_callback(self, msg):
         outcome = OUTCOMES[msg.outcome] if msg.outcome < len(OUTCOMES) else str(msg.outcome)
@@ -92,16 +107,27 @@ class SimMonitor:
         summary = self.scorer.summary(time.time())
         summary["scenario"] = self.scenario.name
         summary["run_s"] = round(time.time() - self.t_start, 1)
+        checks = check_expectations(summary, self.scenario.expect)
+        if checks:
+            summary["expectations"] = checks
+            summary["expectations_passed"] = all(c["ok"] for c in checks)
         text = json.dumps(summary, indent=2)
         rospy.loginfo("sim_monitor: run summary\n%s", text)
         print("\n===== sim_monitor summary (%s) =====\n%s\n" % (self.scenario.name, text), flush=True)
+        if checks:
+            lines = ["%s  %s %s %g (got %s)%s" % ("PASS" if c["ok"] else "FAIL", c["key"], c["op"], c["expected"],
+                                                  c["actual"], " " + c["error"] if c.get("error") else "")
+                     for c in checks]
+            print("===== expectations: %s =====\n%s\n" % (
+                "PASSED" if summary["expectations_passed"] else "FAILED", "\n".join(lines)), flush=True)
         if not self.results_dir:
             return
         os.makedirs(self.results_dir, exist_ok=True)
         path = os.path.join(self.results_dir, "%s_%s.json" % (self.scenario.name, time.strftime("%Y%m%d_%H%M%S")))
         with open(path, "w") as f:
             json.dump({"summary": summary, "log": self.log, "removals": self.scorer.removals,
-                       "observations": self.scorer.results, "ledger_added": self.scorer.added}, f, indent=2)
+                       "observations": self.scorer.results, "ledger_added": self.scorer.added,
+                       "stops": self.scorer.stop_log}, f, indent=2)
         print("sim_monitor: wrote %s" % path, flush=True)
 
 

@@ -10,6 +10,32 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 OUTCOMES = ("PRESENT", "ABSENT", "INCONCLUSIVE")
+KINDS = ("OPPORTUNISTIC", "DETOUR")  # mattbot_dds/ObservationStop kind constants, in order
+STOP_EVENTS = ("STARTED", "ENDED", "ABORTED")
+
+# Navigator log lines (localize_and_navigate.py _start_detour / _arrive_at_detour_viewpoint / detour resume /
+# _abandon_detour / _cancel_detour). Abandons and cancels publish no ObservationEvent, so the log is the
+# only way to see them. Keep in sync with the navigator.
+DETOUR_LOG = (
+    ("started", "Detour to ("),
+    ("reached", "Reached detour viewpoint"),
+    ("done", "Detour done; replanning to the goal"),
+    ("abandoned", "abandoned ("),
+    ("cancelled", "Detour cancelled ("),
+)
+
+
+def kind_name(kind):
+    return KINDS[kind] if isinstance(kind, int) and 0 <= kind < len(KINDS) else str(kind)
+
+
+def _paren(text, after):
+    """Text inside the parentheses that follow ``after`` (the reason of an abandon / cancel)."""
+    i = text.find(after)
+    if i < 0:
+        return ""
+    rest = text[i + len(after):]
+    return rest[:rest.find(")")] if ")" in rest else rest
 
 
 @dataclass
@@ -31,7 +57,14 @@ class RunScorer:
     added: List[dict] = field(default_factory=list)
     removals: List[dict] = field(default_factory=list)
     results: List[dict] = field(default_factory=list)
-    stops: Dict[str, int] = field(default_factory=lambda: {"STARTED": 0, "ENDED": 0, "ABORTED": 0})
+    stops: Dict[str, int] = field(default_factory=lambda: {e: 0 for e in STOP_EVENTS})
+    stops_by_kind: Dict[str, Dict[str, int]] = field(
+        default_factory=lambda: {k: {e: 0 for e in STOP_EVENTS} for k in KINDS})
+    stop_log: List[dict] = field(default_factory=list)  # every ObservationEvent with kind and robot pose
+    last_kind: Dict[str, str] = field(default_factory=dict)  # object_id -> kind of its latest stop
+    detours: Dict[str, int] = field(default_factory=lambda: {name: 0 for name, _ in DETOUR_LOG})
+    detour_reasons: List[str] = field(default_factory=list)  # abandon / cancel reasons
+    runner: Dict[str, int] = field(default_factory=lambda: {"resend": 0, "give_up": 0})
     blockouts: List[dict] = field(default_factory=list)  # one per correct removal
 
     # ---------- Ground truth ----------
@@ -102,8 +135,38 @@ class RunScorer:
 
     # ---------- Observation windows ----------
 
-    def add_stop_event(self, event_name):
+    def add_stop_event(self, event_name, kind="OPPORTUNISTIC", object_id=None, t=None, robot_xy=None, distance=None):
+        """One ObservationEvent. Returns a log line for STARTED / ABORTED, else None."""
         self.stops[event_name] = self.stops.get(event_name, 0) + 1
+        by_event = self.stops_by_kind.setdefault(kind, {e: 0 for e in STOP_EVENTS})
+        by_event[event_name] = by_event.get(event_name, 0) + 1
+        if object_id is not None:
+            self.last_kind[object_id] = kind
+        self.stop_log.append({"t": t, "event": event_name, "kind": kind, "object_id": object_id,
+                              "robot_xy": list(robot_xy) if robot_xy else None, "distance": distance})
+        where = " from (%.2f, %.2f)" % tuple(robot_xy) if robot_xy else ""
+        if event_name == "STARTED":
+            return "%s stop STARTED for %s at %.1f m%s" % (kind, object_id, distance or 0.0, where)
+        if event_name == "ABORTED":
+            return "%s stop ABORTED for %s%s" % (kind, object_id, where)
+        return None
+
+    def add_nav_log(self, text):
+        """A navigator log line; counts detour lifecycle steps. Returns a log line if it was one."""
+        for name, pattern in DETOUR_LOG:
+            if pattern in text and (name != "abandoned" or "Detour to check" in text):
+                self.detours[name] += 1
+                if name in ("abandoned", "cancelled"):
+                    self.detour_reasons.append("%s: %s" % (name, _paren(text, pattern)))
+                return "navigator: " + text.strip()
+        return None
+
+    def add_runner_event(self, text):
+        """A /sim/runner_event line ("resend goal ...", "give_up goal ...")."""
+        key = text.split(" ", 1)[0]
+        if key in self.runner:
+            self.runner[key] += 1
+        return "scenario_runner: " + text
 
     def add_result(self, now, object_id, class_name, outcome, reason, window_start=None, window_end=None):
         t_end = window_end or now
@@ -120,10 +183,11 @@ class RunScorer:
             verdict = "n/a (changed during the window)"
         else:
             verdict = "correct" if (outcome == "PRESENT") == truth else "WRONG"
+        kind = self.last_kind.get(object_id)  # results follow the stop's ENDED event
         self.results.append({"t": now, "object_id": object_id, "class_name": class_name, "outcome": outcome,
-                             "reason": reason, "truly_present": truth, "verdict": verdict})
-        return "observation of %s (%s): %s (%s), truly %s -> %s" % (
-            object_id, class_name, outcome, reason,
+                             "reason": reason, "truly_present": truth, "verdict": verdict, "kind": kind})
+        return "%sobservation of %s (%s): %s (%s), truly %s -> %s" % (
+            kind + " " if kind else "", object_id, class_name, outcome, reason,
             {True: "present", False: "gone", None: "?", "changed": "removed/added mid-window"}[truth], verdict)
 
     # ---------- Navigation blockouts ----------
@@ -151,6 +215,8 @@ class RunScorer:
         correct = [r for r in self.removals if r["correct"]]
         latencies = [r["latency_s"] for r in correct if r["latency_s"] is not None]
         outcome_counts = {o: sum(1 for r in self.results if r["outcome"] == o) for o in OUTCOMES}
+        outcomes_by_kind = {k: {o: sum(1 for r in self.results if r["outcome"] == o and r["kind"] == k) for o in OUTCOMES}
+                            for k in KINDS}
         return {
             "true_objects": sorted({p["object_id"] for p in self.placements}),
             "true_removals": len(removed_truths),
@@ -162,7 +228,60 @@ class RunScorer:
             "stale_ledger_objects": stale,
             "observation_stops": dict(self.stops),
             "observation_outcomes": outcome_counts,
+            "observation_stops_by_kind": {k: dict(v) for k, v in self.stops_by_kind.items()},
+            "observation_outcomes_by_kind": outcomes_by_kind,
+            "detour_stops": self.stops_by_kind.get("DETOUR", {}).get("ENDED", 0),
+            "detours_started": self.detours["started"],
+            "detours_reached": self.detours["reached"],
+            "detours_done": self.detours["done"],
+            "detours_abandoned": self.detours["abandoned"],
+            "detours_cancelled": self.detours["cancelled"],
+            "detour_abandon_reasons": list(self.detour_reasons),
+            "goal_resends": self.runner["resend"],
+            "goals_given_up": self.runner["give_up"],
             "wrong_observation_outcomes": sum(1 for r in self.results if r["verdict"] == "WRONG"),
             "blockouts_still_present": [b["object_id"] for b in self.blockouts if b["cleared_after_s"] is None],
             "blockout_clear_after_s": [b["cleared_after_s"] for b in self.blockouts if b["cleared_after_s"] is not None],
         }
+
+
+# ---------- Expectations ----------
+
+
+def summary_value(summary, path):
+    """Summary field by dotted path (e.g. observation_outcomes_by_kind.DETOUR.PRESENT); lists count their items."""
+    value = summary
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            raise KeyError(path)
+        value = value[part]
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return value
+
+
+def check_expectations(summary, expect):
+    """Scenario ``expect:`` block against a summary. Keys are summary fields (dotted paths allowed) with an
+    optional min_ / max_ prefix; no prefix means equal. Returns one dict per key with ``ok``."""
+    out = []
+    for key, expected in expect.items():
+        op, path = "==", key
+        for prefix, o in (("min_", ">="), ("max_", "<=")):
+            if key.startswith(prefix):
+                op, path = o, key[len(prefix):]
+        try:
+            actual = summary_value(summary, path)
+        except KeyError:
+            out.append({"key": key, "op": op, "expected": expected, "actual": None, "ok": False,
+                        "error": "no summary field %r" % path})
+            continue
+        if not isinstance(actual, (int, float)) or isinstance(actual, bool):
+            ok = False
+        elif op == ">=":
+            ok = actual >= expected
+        elif op == "<=":
+            ok = actual <= expected
+        else:
+            ok = actual == expected
+        out.append({"key": key, "op": op, "expected": expected, "actual": actual, "ok": bool(ok)})
+    return out
