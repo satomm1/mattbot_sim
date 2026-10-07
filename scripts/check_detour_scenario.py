@@ -35,13 +35,16 @@ def main():
     ap.add_argument("--n-trips", type=float, default=5.0, help="launch arg observe_detour_n_trips")
     ap.add_argument("--margin", type=float, default=0.0, help="launch arg observe_detour_margin_m")
     ap.add_argument("--max-detour", type=float, default=15.0, help="launch arg observe_max_detour_m")
+    ap.add_argument("--skip-start", type=float, default=1.0, help="observation_planner ~detour_skip_start_m")
+    ap.add_argument("--skip-goal", type=float, default=1.0, help="observation_planner ~detour_skip_goal_m")
     ap.add_argument("--cache-dir", default=os.path.expanduser("~/.ros/mattbot_roadmap"))
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
     scenario = load_scenario(args.scenario)
     results = check_scenario(scenario, args.map_dir, args.cache_dir, n_trips=args.n_trips, margin_m=args.margin,
-                             max_detour_m=args.max_detour)
+                             max_detour_m=args.max_detour, skip_start_m=args.skip_start,
+                             skip_goal_m=args.skip_goal)
     print("%s: N=%g margin=%g m max_detour=%g m, belief 0" % (scenario.name, args.n_trips, args.margin,
                                                               args.max_detour))
     print(format_results(results))

@@ -124,16 +124,19 @@ so they also run on older navigator versions.
 With `observe_detour:=true`, the observation planner may also send the robot off its path. This only
 happens for a ledger object that no point of the path can see, and only when the extra driving pays off:
 V = N · (1 − belief)/2 · I_o must beat C = detour + v · (turn + dwell). I_o is the object's importance,
-the extra travel per trip if the object blocks a passage. The navigator drives to the viewpoint, looks,
+the extra travel per trip if the object blocks a passage. A detour whose route branches off the path
+within `~detour_skip_start_m` / `~detour_skip_goal_m` (1 m) of the start or goal is never taken: the planner
+logs it as "skip (branches at the start/goal)". The navigator drives to the viewpoint, looks,
 and replans to its goal. See `mattbot_navigation/scripts/observation_planner.py` and `KNOWN_ISSUES.md`.
 
 Because such an object is hidden from the patrol, the robot can't add it to its ledger itself. Mark it
 `known_from_peer: true`, and `scenario_runner` reports it at the start on `/ledger/observation_from_agent`
 as if robot `peer_id` (default 98) had seen it, which is how the fleet would learn about it.
 
-- `detour_present`: `cone_9` blocks the passage north of the corridor's west end (I_o ≈ 9 m). Expected: a
-  detour of about 8 m to around (26.1, 21.5) once its belief has decayed, a PRESENT check, and the
-  patrol resumes. `cone_1` is an opportunistic control.
+- `detour_present`: `cone_9` blocks the passage north of the corridor at x ≈ 25.5 (I_o ≈ 9 m). The patrol runs
+  from x = 46 to x = 22, past the passage, because a detour that branches off within 1 m of a leg's start or
+  goal is never taken. Expected: a detour of about 4 m to around (25.1, 21.5) once its belief has decayed,
+  a PRESENT check, and the patrol resumes. `cone_1` is an opportunistic control.
 - `detour_removed`: the same cone is taken away at t = 150 s. Expected: a later detour check reports
   ABSENT and the ledger removes it. Run it with `observe_detour:=false` for the baseline: the cone is never
   checked and stays in the ledger (`stale_ledger_objects`), so its expectations fail.

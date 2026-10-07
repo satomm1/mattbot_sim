@@ -6,7 +6,8 @@ scored the way observation_planner.py does it, with the object's belief at 0 (fu
 
   - visible from the path within r_max: an opportunistic job, never a detour
   - otherwise I_o (obstacle_importance), D* and the best detour (navigation_utils/detour.py), and
-    V - C from ThresholdPolicy.detour_options; "GO" if the policy would take it
+    V - C from ThresholdPolicy.detour_options; "GO" if the policy would take it (never for a detour
+    that branches off within skip_start_m / skip_goal_m of the leg's start or goal)
 
 It also reports whether the sim camera (5 m, any heading, line of sight on the sim map) could see the
 object from the path, which would let the mapper find the object by itself while patrolling.
@@ -33,6 +34,8 @@ class LegResult:
     value_m: Optional[float] = None
     cost_m: Optional[float] = None
     viewpoint: Optional[tuple] = None
+    branch_arc_m: Optional[float] = None  # where the detour leaves the path (arc length)
+    blocked: str = ""  # why it is never taken (branches off at the start / goal)
     go: bool = False
 
     @property
@@ -88,7 +91,8 @@ def camera_sees(world, path_xy, obj, max_range=5.0, step_m=0.25):
 
 
 def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0, max_detour_m=15.0,
-                   r_min=1.0, r_max=3.5, robot_radius=0.4, cruise_speed=0.4, dwell_s=4.0, object_ids=None):
+                   r_min=1.0, r_max=3.5, robot_radius=0.4, cruise_speed=0.4, dwell_s=4.0, skip_start_m=1.0,
+                   skip_goal_m=1.0, object_ids=None):
     """ObjectResult per scenario object (or per ``object_ids``)."""
     from navigation_utils.detour import DetourParams, DetourPlanner
     from navigation_utils.obstacle_importance import ImportanceEvaluator, ImportanceParams, build_trip_set
@@ -106,7 +110,8 @@ def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0,
     evaluator = ImportanceEvaluator(roadmap, build_trip_set(roadmap, iparams), iparams, cache_dir=cache_dir)
     policy = ThresholdPolicy(cruise_speed=cruise_speed, dwell_s=dwell_s,
                              detour_params=DetourValueParams(n_trips=n_trips, margin_m=margin_m,
-                                                             hard_cap_m=max_detour_m))
+                                                             hard_cap_m=max_detour_m, skip_start_m=skip_start_m,
+                                                             skip_goal_m=skip_goal_m))
     dparams = DetourParams(max_detour_m=max_detour_m, r_max=r_max)
 
     objects = [o for o in scenario.objects if object_ids is None or o.object_id in object_ids]
@@ -145,6 +150,8 @@ def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0,
                         ev = evaluations[0]
                         leg.detour_m, leg.value_m, leg.cost_m = ev.detour_m, ev.value_m, ev.cost_m
                         leg.viewpoint = (round(ev.option.stop.x, 2), round(ev.option.stop.y, 2))
+                        leg.branch_arc_m = detours[o.object_id].branch_arc_m
+                        leg.blocked = ev.blocked
                         leg.go = bool(ev.chosen)
             r.legs.append(leg)
         results.append(r)
@@ -164,8 +171,12 @@ def format_results(results):
                 decision = "never worth a detour (D* <= 0)"
             elif leg.value_m is None:
                 decision = "no viewpoint within D*"
+            elif leg.go:
+                decision = "GO -> viewpoint (%.2f, %.2f), leaves at %.1f m" % (leg.viewpoint + (leg.branch_arc_m,))
+            elif leg.blocked:
+                decision = "skip: %s (leaves at %.1f m)" % (leg.blocked, leg.branch_arc_m)
             else:
-                decision = "GO -> viewpoint (%.2f, %.2f)" % leg.viewpoint if leg.go else "skip (V - C <= margin)"
+                decision = "skip (V - C <= margin)"
             fmt = lambda v: "-" if v is None else "%.1f" % v  # noqa: E731
             lines.append("%s %6s  %-28s %6s %6s %6s %6s  %s" % (
                 head, fmt(leg.d_star), leg.leg, fmt(leg.detour_m), fmt(leg.value_m), fmt(leg.cost_m),

@@ -1,4 +1,4 @@
-# Same hidden cone as detour_present (known from a peer robot, behind the corridor's west end), but it is
+# Same hidden cone and patrol as detour_present (known from a peer robot, north of the corridor), but it is
 # taken away at t = 150 s. Expected: the first detour check (~t = 100 s) reports PRESENT; a later one, once
 # its belief has decayed and its cooldown has passed, reports ABSENT and the ledger removes it.
 # Run with: roslaunch mattbot_sim sim.launch scenario:=detour_removed observe_detour:=true
@@ -9,9 +9,9 @@ map: current_map
 start: {x: 28.0, y: 18.95, theta: 0.0}
 objects:
   - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true, detour: expected}
-waypoints:
+waypoints:   # the west end is past the passage, so the detour branches off mid-path (not at a goal)
   - {x: 46.0, y: 18.95, theta: 3.14159}
-  - {x: 28.0, y: 18.95, theta: 0.0}
+  - {x: 22.0, y: 18.95, theta: 0.0}
 loop: true
 duration: 600
 events:
