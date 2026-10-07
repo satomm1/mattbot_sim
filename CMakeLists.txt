@@ -14,3 +14,4 @@ catkin_install_python(PROGRAMS
   scripts/sim_monitor.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+install(PROGRAMS scripts/sim_rviz.sh DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

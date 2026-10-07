@@ -37,6 +37,8 @@
 
   <param name="/use_sim_time" value="false"/>
   <param name="/sim/scenario_file" value="$(arg scenario_file)"/>
+  <!-- RViz config served from the master, so a remote viewer needs no copy of this package (scripts/sim_rviz.sh) -->
+  <param name="/sim/rviz_config" textfile="$(find mattbot_sim)/rviz/sim.rviz"/>
   <!-- The ledger needs an integer ROBOT_ID; detections carry it as sending_agent -->
   <env name="ROBOT_ID" value="$(arg robot_id)"/>
   <env name="PYTHONUNBUFFERED" value="1"/>

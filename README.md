@@ -57,16 +57,24 @@ You can also send goals yourself with `/external_goal` (`geometry_msgs/Pose2D`) 
 
 ### Watch in RViz (from another machine)
 
-RViz is not installed in the robot container. Run the sim with a reachable IP, then point RViz at that master:
+RViz is not installed in the robot container. Run the sim with a reachable IP. `sim.launch` puts the RViz config
+([rviz/sim.rviz](rviz/sim.rviz)) on the parameter server as `/sim/rviz_config`, and [scripts/sim_rviz.sh](scripts/sim_rviz.sh)
+fetches it and opens RViz with every display already set up:
 
 ```bash
 # on the Jetson
 export ROS_MASTER_URI=http://<jetson-ip>:11411 ROS_IP=<jetson-ip>
 roslaunch mattbot_sim sim.launch scan:=true
-# on a laptop with ROS Noetic + RViz (and this package, or just copy rviz/sim.rviz)
+# on a laptop with ROS Noetic + RViz. The package is not needed; copy sim_rviz.sh once, e.g.
+#   scp <user>@<jetson-ip>:/workspace/catkin_ws/src/mattbot_sim/scripts/sim_rviz.sh ~/bin/
 export ROS_MASTER_URI=http://<jetson-ip>:11411 ROS_IP=<laptop-ip>
-rviz -d sim.rviz
+sim_rviz.sh
 ```
+
+Without the script, this one-liner does the same:
+`python3 -c 'import sys, rospy; sys.stdout.write(rospy.get_param("/sim/rviz_config"))' > /tmp/sim.rviz && rviz -d /tmp/sim.rviz`.
+The fetched config is saved to `~/.rviz/mattbot_sim.rviz` and replaced on every run. That file is also used when the master
+can't be reached. To keep display changes, edit `rviz/sim.rviz` in this package.
 
 The config shows:
 - the map and `/navigation_map`
@@ -74,6 +82,7 @@ The config shows:
 - the objects the mapper has confirmed
 - observation viewsheds and stops
 - the smoothed path, the true pose and the scan
+- disabled (tick to show): the object belief map, the A* planned path, waypoints, object blockouts (`/object_map`), and the observation roadmap and detours
 
 ## Scenarios
 
