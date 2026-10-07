@@ -7,7 +7,7 @@
                                amcl stub (dynamic_reconfigure only), scenario_runner (goals + events), sim_monitor (scoring)
      Real, unchanged:          twist_mux, publish_transforms, occupancy_grid_mapper, navigator_node, observation_planner,
                                observation_evaluator (depth off), observation_ledger, object_belief_map
-     Not run:                  hardware drivers, amcl, localization_quality, the OSOD detector, DDS nodes
+     Not run:                  hardware drivers, amcl, localization_quality, the OSOD detector, DDS nodes (unless dds:=true)
 -->
 <launch>
   <arg name="scenario" default="remove_one"/>
@@ -16,6 +16,10 @@
   <arg name="duration" default="-1"/>
   <arg name="results_dir" default="$(find mattbot_sim)/results"/>
   <arg name="robot_id" default="99"/>
+  <!-- Multi-robot: run the robot's DDS nodes (ledger sync, locations, heartbeats) over loopback; with run_fleet.py
+       each simulated robot has its own ROS master, robot_id and a shared clock_epoch (wall time, see sim_world) -->
+  <arg name="dds" default="false"/>
+  <arg name="clock_epoch" default="0"/>
   <!-- Simulated lidar, only for RViz -->
   <arg name="scan" default="false"/>
 
@@ -56,6 +60,9 @@
   <param name="/sim/rviz_config" textfile="$(find mattbot_sim)/rviz/sim.rviz"/>
   <!-- The ledger needs an integer ROBOT_ID; detections carry it as sending_agent -->
   <env name="ROBOT_ID" value="$(arg robot_id)"/>
+  <!-- Always the loopback-only DDS config: a simulated robot must never join the real fleet (robot_env.sh) -->
+  <env name="CYCLONEDDS_URI" value="file://$(find mattbot_sim)/config/cyclonedds_sim.xml"/>
+  <param name="/sim/clock_epoch" value="$(arg clock_epoch)"/>
   <env name="PYTHONUNBUFFERED" value="1"/>
 
   <!-- ===== Simulated hardware, localization and perception ===== -->
@@ -107,6 +114,9 @@
     <param name="hold_s" value="$(arg belief_hold_s)"/>
     <param name="decay_s" value="$(arg belief_decay_s)"/>
   </node>
+
+  <!-- ===== Inter-robot communication (multi-robot runs) ===== -->
+  <include if="$(arg dds)" file="$(find mattbot_sim)/launch/dds_sim.launch"/>
 
   <!-- ===== Scenario and scoring ===== -->
   <node pkg="mattbot_sim" type="scenario_runner.py" name="scenario_runner" output="screen" required="true">

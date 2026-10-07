@@ -25,7 +25,7 @@ from std_msgs.msg import Bool, Int32, String
 
 from mattbot_sim.clock import wait_for_clock
 from mattbot_sim.peers import peer_messages
-from mattbot_sim.scenario import load_scenario
+from mattbot_sim.scenario import load_scenario, robot_id_from_env
 from mattbot_sim.world import SimObject
 
 IDLE, LOCALIZING2 = 0, 2
@@ -43,7 +43,7 @@ class ScenarioRunner:
     def __init__(self):
         rospy.init_node("scenario_runner")
         wait_for_clock()  # all times here are ROS time (simulated with /use_sim_time)
-        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
+        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"), robot_id_from_env())
         duration = float(rospy.get_param("~duration_s", -1.0))
         self.duration = duration if duration >= 0.0 else self.scenario.duration
         self.reach_tol = float(rospy.get_param("~reach_tol_m", 0.5))
@@ -89,6 +89,19 @@ class ScenarioRunner:
         while not rospy.is_shutdown() and not self.localized:
             rospy.sleep(0.5)
         t0 = rospy.get_time()
+        epoch = float(rospy.get_param("/sim/clock_epoch", 0.0))
+        if self.scenario.is_fleet and epoch > 0.0:
+            # Fleet: every robot starts its patrol, and every event fires, at the same simulated time, so the
+            # robots' separate worlds stay identical. fleet_start_s must cover localization and DDS discovery.
+            t_start = epoch + self.scenario.fleet_start_s
+            if t0 > t_start:
+                rospy.logwarn("scenario_runner: localized %.0f s after the fleet start; raise fleet_start_s",
+                              t0 - t_start)
+            rospy.loginfo("scenario_runner: robot %s waiting for the fleet start (%.0f s)", self.scenario.robot_id,
+                          max(t_start - t0, 0.0))
+            while not rospy.is_shutdown() and rospy.get_time() < t_start:
+                rospy.sleep(0.2)
+            t0 = t_start
         self.seed_peer_objects(t0)
         rospy.loginfo("scenario_runner: localized; starting %d waypoints, %d events%s", len(self.scenario.waypoints),
                       len(self.scenario.events), ", %.0f s run" % self.duration if self.duration > 0 else "")
@@ -118,7 +131,8 @@ class ScenarioRunner:
                         if self.dist_to(wp) > self.reach_tol:
                             rospy.logwarn("scenario_runner: giving up on waypoint %d after %d retries", idx, retries)
                             self.runner_event("give_up goal %d %.1f m short" % (idx, self.dist_to(wp)))
-                        rospy.sleep(self.pause_s)
+                        pause = self.scenario.waypoint_pauses[idx] if idx < len(self.scenario.waypoint_pauses) else None
+                        rospy.sleep(self.pause_s if pause is None else pause)
                         idx, sent_at, retries = idx + 1, None, 0
                         if idx >= len(waypoints):
                             laps += 1

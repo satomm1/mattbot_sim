@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CycloneDDS for simulated fleets (mattbot_sim dds:=true / run_fleet.py): every simulated robot's DDS
+     nodes run on this host and talk over loopback only, so they can never reach the real fleet on wlan0.
+     sim.launch sets CYCLONEDDS_URI to this file for its nodes (overriding robot_env.sh). -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo"/>
+      </Interfaces>
+      <!-- lo has no multicast -->
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <Peers>
+        <Peer Address="127.0.0.1"/>
+      </Peers>
+      <!-- One participant index per DDS process: 8 per simulated robot (the default limit is 10 per host) -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+      <!-- Separate port mapping and discovery tag from the real fleet, in case a robot stack runs here too -->
+      <ExternalDomainId>37</ExternalDomainId>
+      <Tag>mattbot_sim</Tag>
+      <LeaseDuration>20s</LeaseDuration>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

@@ -1,0 +1,38 @@
+# Two robots share the ledger over DDS. Robot 91 patrols the remove_one corridor (x 28-46) and finds the
+# three objects; robot 92 patrols further east (x 52-64) and can never see them, so everything it knows
+# about them comes from robot 91. chair_1 is taken away at t = 150 s: robot 91's check reports ABSENT, and
+# the removal must reach robot 92's ledger too.
+# Run: rosrun mattbot_sim run_fleet.py fleet_share_removal
+name: fleet_share_removal
+map: current_map
+fleet_start_s: 60          # s after the shared clock epoch: localization (~20 s) + DDS discovery (~30 s)
+objects:
+  - {id: chair_1, class: chair, x: 35.0, y: 19.7, width: 0.4}
+  - {id: cone_1, class: cone, x: 40.0, y: 18.15, width: 0.3}
+  - {id: backpack_1, class: backpack, x: 43.5, y: 19.75, width: 0.35}
+duration: 600
+events:
+  - {at: 150, remove: chair_1}
+expect:
+  false_removals: 0
+  spurious_ledger_objects: 0
+  stale_ledger_objects: 0
+  correct_removals: 1
+  goal_resends: 0
+robots:
+  - id: 91                 # finds the objects and checks them
+    start: {x: 28.0, y: 18.95, theta: 0.0}
+    waypoints:
+      - {x: 46.0, y: 18.95, theta: 3.14159}
+      - {x: 28.0, y: 18.95, theta: 0.0}
+    expect:
+      ledger_objects_added: 3
+      min_observation_outcomes.ABSENT: 1
+  - id: 92                 # never sees them: learns the objects and the removal from robot 91
+    start: {x: 52.0, y: 18.95, theta: 0.0}
+    waypoints:
+      - {x: 64.0, y: 18.95, theta: 3.14159}
+      - {x: 52.0, y: 18.95, theta: 0.0}
+    expect:
+      ledger_objects_added: 3
+      observation_stops.STARTED: 0

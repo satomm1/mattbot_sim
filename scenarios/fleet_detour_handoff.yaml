@@ -1,0 +1,39 @@
+# One robot spots an object, another checks it by detour. Robot 91 starts in the passage north of the
+# corridor, looks at cone_9 from 4.5 m (pausing so its mapper confirms it), then drives north out of sight
+# and stays there. Robot 92 patrols the corridor (x 22-46, as in detour_present): it cannot see cone_9 from
+# its path, learns it from robot 91 over DDS, and once the belief has decayed takes a detour to check it.
+# The cone is taken away at t = 200 s; robot 92's detour check reports ABSENT, and the removal reaches robot 91.
+# Run: rosrun mattbot_sim run_fleet.py fleet_detour_handoff
+name: fleet_detour_handoff
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_detour: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4}
+duration: 600
+events:
+  - {at: 200, remove: cone_9}
+expect:
+  ledger_objects_added: 1
+  correct_removals: 1
+  false_removals: 0
+  spurious_ledger_objects: 0
+  stale_ledger_objects: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # the spotter: confirms the cone once, then leaves
+    start: {x: 25.0, y: 29.0, theta: -1.5708}
+    loop: false
+    waypoints:
+      - {x: 25.0, y: 29.5, theta: -1.5708, pause_s: 15}
+      - {x: 25.0, y: 33.5, theta: 1.5708}
+    expect:
+      detours_started: 0
+  - id: 92                 # the checker: hidden from its patrol, so only a detour can check it
+    start: {x: 28.0, y: 18.95, theta: 0.0}
+    waypoints:
+      - {x: 46.0, y: 18.95, theta: 3.14159}
+      - {x: 22.0, y: 18.95, theta: 0.0}
+    expect:
+      min_detour_stops: 1
+      min_observation_outcomes_by_kind.DETOUR.ABSENT: 1

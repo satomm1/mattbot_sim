@@ -1,0 +1,28 @@
+<!-- The robot's DDS nodes (mattbot_dds/launch/dds.launch) for a simulated robot, included by sim.launch dds:=true.
+     Differences from dds.launch:
+       - no observation_ledger / object_belief_map (sim.launch runs them) and no image_publisher (no images in sim)
+       - entry_exit's map, map_mod and map_metadata are remapped away: sim_world publishes the maps, and entry_exit
+         republishing them every 10 s would reset observation_planner's viewsheds
+       - a DDS robot_shutdown cannot end the run
+     The CycloneDDS config (loopback only) is set by sim.launch. -->
+<launch>
+  <node name="agent_entry_exit" pkg="mattbot_dds" type="entry_exit.py" output="log">
+    <remap from="map" to="/dds_unused/map"/>
+    <remap from="map_mod" to="/dds_unused/map_mod"/>
+    <remap from="map_metadata" to="/dds_unused/map_metadata"/>
+  </node>
+  <node name="heartbeat_publisher" pkg="mattbot_dds" type="heartbeat_publisher.py" output="log"/>
+  <node name="heartbeat_subscriber" pkg="mattbot_dds" type="heartbeat_subscriber.py" output="log"/>
+  <node name="location_subscriber" pkg="mattbot_dds" type="location_subscriber.py" output="log"/>
+  <node name="location_publisher" pkg="mattbot_dds" type="location_publisher.py" output="log"/>
+  <node name="data_publisher" pkg="mattbot_dds" type="data_publisher.py" output="log">
+    <param name="sqlite" value="false"/>
+  </node>
+  <node name="data_subscriber" pkg="mattbot_dds" type="data_subscriber.py" output="log">
+    <param name="sqlite" value="false"/>
+  </node>
+  <node name="own_data_subscriber" pkg="mattbot_dds" type="own_data_subscriber.py" output="log" required="true">
+    <param name="sqlite" value="false"/>
+    <param name="allow_dds_roslaunch_shutdown" value="false"/>
+  </node>
+</launch>

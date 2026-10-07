@@ -15,7 +15,9 @@ Also:     /initialpose   latched start pose, so the navigator leaves WAITING_FOR
 
 Simulated time: with /use_sim_time, sim_world is the clock. A wall-paced thread advances /clock by a
 fixed physics step (1/~rate_hz) every step / ~speed wall seconds, starting at the current Unix time
-(so stamps, ledger sessions and logs still look like wall time). Everything else in the stack runs on
+(so stamps, ledger sessions and logs still look like wall time), or at /sim/clock_epoch if set: several
+simulated robots (one ROS master each, see run_fleet.py) given the same epoch then share one timeline,
+sim time = epoch + speed * (wall - epoch), each catching up if it falls behind. Everything else in the stack runs on
 ROS time and follows it; ~speed > 1 runs the scenario faster than real time as long as the nodes keep
 up (sim_monitor checks the navigator and detector rates). Without /use_sim_time it runs on the wall
 clock as before.
@@ -45,7 +47,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from mattbot_sim.kinematics import Limits, Pose2D, clamp, compose, inverse, step
 from mattbot_sim.perception import CameraModel, DetectorNoise, TurnGate, detect
-from mattbot_sim.scenario import load_scenario, parse_event
+from mattbot_sim.scenario import load_scenario, robot_id_from_env, parse_event
 from mattbot_sim.world import World, load_maps
 
 CMD_TIMEOUT_S = 0.5  # stop if /cmd_vel goes quiet (as the MCU would)
@@ -113,13 +115,15 @@ class SimWorld:
                 raise SystemExit("sim_world: ~speed must be > 0")
             # Start the clock before anything reads ROS time (it is 0 until the first /clock)
             self.clock_pub = rospy.Publisher("/clock", Clock, queue_size=10)
-            self.t_sim = time.time()  # wall clock: the sim clock starts at the current Unix time
+            # Shared timeline for a fleet (same epoch on every robot), else start at the current Unix time
+            self.epoch = float(rospy.get_param("/sim/clock_epoch", 0.0)) or time.time()  # wall clock: clock origin
+            self.t_sim = self.schedule()
             while not rospy.is_shutdown() and rospy.get_time() <= 0.0:
                 self.clock_pub.publish(Clock(clock=rospy.Time.from_sec(self.t_sim)))
                 time.sleep(0.05)  # wall clock: waiting for our own first /clock to arrive
 
         rospack = rospkg.RosPack()
-        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
+        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"), robot_id_from_env())
         map_json_dir = os.path.join(rospack.get_path("mattbot_mcl"), "map_json")
         self.grid, self.grid_mod = load_maps(self.scenario.map, map_json_dir)
         self.world = World(self.grid, self.scenario.objects, now=rospy.get_time())
@@ -239,9 +243,16 @@ class SimWorld:
 
     # ---------- Motion ----------
 
+    def schedule(self):
+        """Where the sim clock should be now: epoch + speed * (wall - epoch)."""
+        return self.epoch + self.speed * (time.time() - self.epoch)  # wall clock: pacing
+
     def clock_loop(self):
-        """Simulated time: fixed physics steps, /clock published after each, paced to ~speed x wall time."""
-        wall_next = time.time()  # wall clock: pacing
+        """Simulated time: fixed physics steps, /clock published after each, paced to ~speed x wall time.
+
+        The clock follows schedule(): it waits when ahead and steps without sleeping when behind, so robots
+        sharing /sim/clock_epoch stay on one timeline (a robot that falls behind catches up in a burst; the
+        loop-rate check in sim_monitor shows if that happens a lot)."""
         report_sim, report_wall = self.t_sim, time.time()  # wall clock: achieved-speed report
         while not rospy.is_shutdown():
             self.t_sim += self.dt
@@ -252,12 +263,9 @@ class SimWorld:
                 if rospy.core.is_shutdown_requested():
                     return  # topics close before is_shutdown() turns true
                 raise
-            wall_next += self.dt / self.speed
-            delay = wall_next - time.time()  # wall clock: pacing
-            if delay > 0.0:
-                time.sleep(delay)  # wall clock: pacing
-            elif delay < -1.0:
-                wall_next = time.time()  # wall clock: fell behind; do not try to catch up in a burst
+            ahead = self.t_sim - self.schedule()  # sim seconds ahead of the timeline
+            if ahead > 0.0:
+                time.sleep(ahead / self.speed)  # wall clock: pacing
             if self.t_sim - report_sim >= 30.0:
                 wall = time.time()  # wall clock: achieved-speed report
                 rospy.loginfo("sim_world: simulated time at %.2fx (asked %gx)",

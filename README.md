@@ -14,7 +14,7 @@ navigator, observation planner, observation evaluator, ledger and belief.
 
 The real nodes that run: `twist_mux`, `publish_transforms.py` (short URDF), `occupancy_grid_mapper`, `navigator_node` (observe on),
 `observation_planner`, `observation_evaluator` (depth check off), `observation_ledger`, `object_belief_map`.
-No DDS nodes run. The ledger works without them.
+No DDS nodes run by default; the ledger works without them. For several robots talking over DDS see [Several robots](#several-robots).
 
 ## Run
 
@@ -185,6 +185,45 @@ rosrun mattbot_sim check_detour_scenario.py $(rospack find mattbot_sim)/scenario
 It exits 1 in two cases: an object annotated `detour: expected` (or `declined`) would not get (or would get)
 a detour, or the sim camera could see the object from the path. In that second case the robot could find
 it while patrolling. `test/test_detour_scenarios.py` runs the same check on every annotated scenario.
+
+## Several robots
+
+`run_fleet.py` runs a fleet scenario with several simulated robots on this machine. Each robot has its own
+ROS master and runs the full stack, with the real DDS nodes from `mattbot_dds` (`sim.launch dds:=true`,
+see `launch/dds_sim.launch`). The robots talk over DDS exactly as on the fleet: entry/exit, heartbeats,
+locations, and ledger observations, removals and sync. They do so only over loopback:
+`config/cyclonedds_sim.xml` is forced for every sim node, so a simulated robot can never reach the real
+fleet. No orchestrator is needed.
+
+```bash
+rosrun mattbot_sim run_fleet.py fleet_share_removal          # 2 robots
+rosrun mattbot_sim run_fleet.py fleet_share_removal_3        # 3 robots
+rosrun mattbot_sim run_fleet.py fleet_detour_handoff         # 2 robots, detours on (from the scenario's launch_args)
+rosrun mattbot_sim run_fleet.py fleet_share_removal --speed 2 -- observe_cooldown_s:=30   # args after -- go to every robot
+```
+
+- **Masters and ids.** Robot k uses ROS master port `--port-base + k` (default 11450) and its scenario `id`
+  as `ROBOT_ID`. Use ids from 20 up, not the real robots' ids.
+- **One timeline.** All robots get the same `clock_epoch` and share one simulated timeline, so `--speed`
+  applies to all of them. Each robot simulates the same objects and events in its own world. Patrols and
+  event times start at `fleet_start_s` after the epoch, which covers localization and DDS discovery.
+- **The robots do not see or block each other yet.** Keep their patrols apart.
+- **Output.** Logs and results go to `results/fleet_<scenario>_<time>/robot<id>/`. At the end the per-robot
+  expectations are printed with a fleet PASS/FAIL, and the exit code is 0 only if every robot passed.
+  The first robot to finish stops the others, and Ctrl-C stops all of them.
+
+Fleet scenarios give a `robots` list in place of `start` / `waypoints` (see `src/mattbot_sim/scenario.py`).
+Each robot's `expect` is merged over the shared one. A waypoint may also set `pause_s`.
+
+- `fleet_share_removal`: robot 91 patrols the `remove_one` corridor. Robot 92 patrols further east and can't
+  see the objects. Robot 92 must learn all three objects, and `chair_1`'s removal, from robot 91.
+- `fleet_share_removal_3`: the same, plus robot 93 further east.
+- `fleet_detour_handoff`: robot 91 spots `cone_9` in the north passage and leaves. Robot 92, patrolling the
+  corridor, learns it over DDS and checks it by detour. The cone is gone by then, and the removal reaches
+  robot 91.
+
+CPU: every robot runs the whole stack plus 8 DDS processes. Watch `loop_rates_ok` in each robot's summary
+before raising `--speed` or adding robots.
 
 ## Results
 

@@ -23,7 +23,7 @@ from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import String
 
 from mattbot_sim.clock import wait_for_clock
-from mattbot_sim.scenario import load_scenario
+from mattbot_sim.scenario import load_scenario, robot_id_from_env
 from mattbot_sim.scoring import OUTCOMES, RateTracker, RunScorer, check_expectations, kind_name
 
 EVENT_NAMES = {ObservationEvent.STARTED: "STARTED", ObservationEvent.ENDED: "ENDED", ObservationEvent.ABORTED: "ABORTED"}
@@ -32,7 +32,7 @@ EVENT_NAMES = {ObservationEvent.STARTED: "STARTED", ObservationEvent.ENDED: "END
 class SimMonitor:
     def __init__(self):
         rospy.init_node("sim_monitor")
-        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"))
+        self.scenario = load_scenario(rospy.get_param("/sim/scenario_file"), robot_id_from_env())
         self.results_dir = rospy.get_param("~results_dir", "")
         self.scorer = RunScorer(match_radius=float(rospy.get_param("~match_radius_m", 1.0)))
         self.log = []
@@ -117,6 +117,8 @@ class SimMonitor:
         self.check_blockouts()
         summary = self.scorer.summary(rospy.get_time())
         summary["scenario"] = self.scenario.name
+        if self.scenario.robot_id is not None:
+            summary["robot_id"] = self.scenario.robot_id
         summary["run_s"] = round(rospy.get_time() - self.t_start, 1)
         summary["run_wall_s"] = round(time.time() - self.wall_start, 1)  # wall clock: speedup = run_s / run_wall_s
         summary["loop_rates"] = {name: r.summary() for name, r in self.rates.items()}
@@ -132,7 +134,8 @@ class SimMonitor:
             summary["expectations_passed"] = all(c["ok"] for c in checks)
         text = json.dumps(summary, indent=2)
         rospy.loginfo("sim_monitor: run summary\n%s", text)
-        print("\n===== sim_monitor summary (%s) =====\n%s\n" % (self.scenario.name, text), flush=True)
+        who = self.scenario.name + (" robot %d" % self.scenario.robot_id if self.scenario.robot_id is not None else "")
+        print("\n===== sim_monitor summary (%s) =====\n%s\n" % (who, text), flush=True)
         if checks:
             lines = ["%s  %s %s %g (got %s)%s" % ("PASS" if c["ok"] else "FAIL", c["key"], c["op"], c["expected"],
                                                   c["actual"], " " + c["error"] if c.get("error") else "")
@@ -142,7 +145,8 @@ class SimMonitor:
         if not self.results_dir:
             return
         os.makedirs(self.results_dir, exist_ok=True)
-        path = os.path.join(self.results_dir, "%s_%s.json" % (self.scenario.name, time.strftime("%Y%m%d_%H%M%S")))
+        robot = "_robot%d" % self.scenario.robot_id if self.scenario.robot_id is not None else ""
+        path = os.path.join(self.results_dir, "%s%s_%s.json" % (self.scenario.name, robot, time.strftime("%Y%m%d_%H%M%S")))
         with open(path, "w") as f:
             json.dump({"summary": summary, "log": self.log, "removals": self.scorer.removals,
                        "observations": self.scorer.results, "ledger_added": self.scorer.added,

@@ -171,3 +171,39 @@ def test_rate_tracker():
     for k in range(51):  # 5 Hz: the node did not keep up
         slow.tick(100.0 + 0.2 * k)
     assert slow.ok() is False and slow.summary()["min_window_hz"] == pytest.approx(5.0)
+
+
+def test_fleet_scenario_selects_robot(tmp_path):
+    path = tmp_path / "f.yaml"
+    path.write_text(
+        "map: m\nfleet_start_s: 45\nloop: true\nexpect: {false_removals: 0, goal_resends: 0}\n"
+        "launch_args: {observe_detour: true, speed: 2}\n"
+        "objects:\n  - {id: a, class: cone, x: 1, y: 2}\n"
+        "robots:\n"
+        "  - {id: 91, start: {x: 0, y: 0}, waypoints: [{x: 5, y: 0, pause_s: 9}, {x: 0, y: 0}],\n"
+        "     expect: {goal_resends: 2}}\n"
+        "  - {id: 92, start: {x: 9, y: 0}, loop: false, waypoints: [{x: 12, y: 0}]}\n")
+    first = load_scenario(str(path))
+    assert first.is_fleet and first.robot_id == 91 and first.robot_ids == [91, 92]
+    assert first.fleet_start_s == 45.0 and first.waypoint_pauses == [9.0, None]
+    assert first.expect == {"false_removals": 0.0, "goal_resends": 2.0}  # robot keys win
+    assert first.launch_args == {"observe_detour": "true", "speed": "2"}
+    second = load_scenario(str(path), 92)
+    assert (second.start.x, second.loop, len(second.waypoints)) == (9.0, False, 1)
+    assert second.expect == {"false_removals": 0.0, "goal_resends": 0.0}
+    with pytest.raises(ValueError):
+        load_scenario(str(path), 7)
+    assert load_scenario(str(path), None).robot_id == 91
+    # A single-robot scenario ignores the robot id
+    single = os.path.join(SCENARIOS, "remove_one.yaml")
+    assert not load_scenario(single, 91).is_fleet
+
+
+def test_fleet_scenario_validation(tmp_path):
+    path = tmp_path / "f.yaml"
+    path.write_text("map: m\nstart: {x: 0, y: 0}\nrobots:\n  - {id: 1, start: {x: 0, y: 0}}\n")
+    with pytest.raises(ValueError):  # start belongs to each robot
+        load_scenario(str(path))
+    path.write_text("map: m\nrobots:\n  - {id: 1, start: {x: 0, y: 0}}\n  - {id: 1, start: {x: 1, y: 0}}\n")
+    with pytest.raises(ValueError):  # duplicate ids
+        load_scenario(str(path))

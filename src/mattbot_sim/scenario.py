@@ -27,13 +27,29 @@ Optional, for detour tests:
       min_detour_stops: 1         # min_<field> / max_<field> / <field> (==) on summary fields
       false_removals: 0
 
+Fleet scenarios (several simulated robots, one ROS master each; scripts/run_fleet.py) give a
+``robots`` list instead of ``start`` / ``waypoints``; objects and events are shared:
+
+    fleet_start_s: 60             # patrols and event times start this long after the shared clock epoch
+    robots:
+      - id: 91                    # ROBOT_ID (DDS id); avoid ids of real robots
+        start: {x: 28.0, y: 18.95, theta: 0.0}
+        waypoints: [...]
+        loop: true                # optional, else the top-level value
+        expect: {...}             # this robot's checks, merged over the top-level expect
+    launch_args: {observe_detour: true}   # optional: sim.launch args run_fleet.py gives every robot
+
+A waypoint may have ``pause_s`` (wait there this long before the next one; default ~pause_at_waypoint_s).
+
+load_scenario(path, robot_id) picks that robot's part (the first robot if robot_id is None).
+
 The same event dicts (without ``at``) can be sent at runtime as YAML on /sim/event.
 Pure Python (no ROS).
 """
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -95,14 +111,63 @@ class Scenario:
     known_from_peer: List[str] = field(default_factory=list)  # object ids seeded into the ledger at start
     detour: Dict[str, str] = field(default_factory=dict)  # object_id -> "expected" | "declined"
     expect: Dict[str, float] = field(default_factory=dict)  # see scoring.check_expectations
+    robot_id: Optional[int] = None  # fleet scenarios: the robot this view is for
+    robot_ids: List[int] = field(default_factory=list)  # fleet scenarios: every robot, in file order
+    fleet_start_s: Optional[float] = None  # fleet scenarios: patrol / event time 0 = clock epoch + this
+    waypoint_pauses: List[Optional[float]] = field(default_factory=list)  # per waypoint pause_s (None: default)
+    launch_args: Dict[str, str] = field(default_factory=dict)  # sim.launch args run_fleet.py passes every robot
+
+    @property
+    def is_fleet(self):
+        return bool(self.robot_ids)
 
 
-def load_scenario(path):
+def parse_expect(expect, path):
+    expect = expect or {}
+    if not isinstance(expect, dict):
+        raise ValueError("%s: expect must be a mapping" % path)
+    return {str(k): float(v) for k, v in expect.items()}
+
+
+def select_robot(d, path, robot_id):
+    """Fleet scenario dict -> (robot dict, all ids); robot_id None picks the first robot."""
+    robots = d["robots"]
+    if not isinstance(robots, list) or not robots:
+        raise ValueError("%s: robots must be a non-empty list" % path)
+    for r in robots:
+        if "id" not in r or "start" not in r:
+            raise ValueError("%s: every robot needs id and start, got %r" % (path, r))
+    ids = [int(r["id"]) for r in robots]
+    if len(set(ids)) != len(ids):
+        raise ValueError("%s: duplicate robot ids" % path)
+    if robot_id is None:
+        return robots[0], ids
+    for r in robots:
+        if int(r["id"]) == int(robot_id):
+            return r, ids
+    raise ValueError("%s: no robot with id %s (robots: %s)" % (path, robot_id, ids))
+
+
+def robot_id_from_env():
+    """ROBOT_ID of this process (sim.launch sets it for every node), or None."""
+    value = os.environ.get("ROBOT_ID", "")
+    return int(value) if value.strip().lstrip("-").isdigit() else None
+
+
+def load_scenario(path, robot_id=None):
     with open(path, "r") as f:
         d = yaml.safe_load(f) or {}
-    for key in ("map", "start"):
+    robot, robot_ids = (None, [])
+    if "robots" in d:
+        robot, robot_ids = select_robot(d, path, robot_id)
+        for key in ("start", "waypoints"):
+            if key in d:
+                raise ValueError("%s: fleet scenarios give %r per robot" % (path, key))
+    required = ("map",) if robot else ("map", "start")
+    for key in required:
         if key not in d:
             raise ValueError("%s: missing %r" % (path, key))
+    part = robot or d  # where start / waypoints / loop come from
     objects = [parse_object(o) for o in d.get("objects", [])]
     ids = [o.object_id for o in objects]
     if len(set(ids)) != len(ids):
@@ -119,20 +184,27 @@ def load_scenario(path):
             if o["detour"] not in DETOUR_ANNOTATIONS:
                 raise ValueError("%s: object %s: detour must be one of %s" % (path, o["id"], ", ".join(DETOUR_ANNOTATIONS)))
             detour[str(o["id"])] = str(o["detour"])
-    expect = d.get("expect", {}) or {}
-    if not isinstance(expect, dict):
-        raise ValueError("%s: expect must be a mapping" % path)
+    expect = parse_expect(d.get("expect"), path)
+    if robot:
+        expect.update(parse_expect(robot.get("expect"), path))
     return Scenario(
         name=str(d.get("name", os.path.splitext(os.path.basename(path))[0])),
         map=str(d["map"]),
-        start=parse_pose(d["start"], "start"),
+        start=parse_pose(part["start"], "start"),
         objects=objects,
-        waypoints=[parse_pose(w, "waypoint") for w in d.get("waypoints", [])],
-        loop=bool(d.get("loop", True)),
+        waypoints=[parse_pose(w, "waypoint") for w in part.get("waypoints", [])],
+        loop=bool(part.get("loop", d.get("loop", True))),
         duration=float(d.get("duration", 0.0)),
         events=events,
         peer_id=int(d.get("peer_id", DEFAULT_PEER_ID)),
         known_from_peer=known_from_peer,
         detour=detour,
-        expect={str(k): float(v) for k, v in expect.items()},
+        expect=expect,
+        robot_id=int(robot["id"]) if robot else None,
+        robot_ids=robot_ids,
+        fleet_start_s=float(d.get("fleet_start_s", 60.0)) if robot else None,
+        waypoint_pauses=[float(w["pause_s"]) if isinstance(w, dict) and "pause_s" in w else None
+                         for w in part.get("waypoints", [])],
+        launch_args={str(k): str(v).lower() if isinstance(v, bool) else str(v)
+                     for k, v in (d.get("launch_args") or {}).items()},
     )
