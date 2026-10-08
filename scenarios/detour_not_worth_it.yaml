@@ -3,6 +3,7 @@
 # Run with: roslaunch mattbot_sim sim.launch scenario:=detour_not_worth_it observe_detour:=true
 name: detour_not_worth_it
 map: current_map
+launch_args: {observe_detour: true}   # fast sim and run_fleet.py; for sim.launch pass observe_detour:=true
 start: {x: 28.0, y: 18.95, theta: 0.0}
 objects:
   - {id: cone_8, class: cone, x: 44.0, y: 15.0, width: 0.4, known_from_peer: true, detour: declined}

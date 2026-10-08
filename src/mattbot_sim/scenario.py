@@ -40,6 +40,8 @@ Fleet scenarios (several simulated robots, one ROS master each; scripts/run_flee
     launch_args: {observe_detour: true}   # optional: sim.launch args run_fleet.py gives every robot
 
 A waypoint may have ``pause_s`` (wait there this long before the next one; default ~pause_at_waypoint_s).
+``goals: [{at: 120, robot: 91, x: .., y: .., theta: ..}]`` sends scripted goals (fast simulator only): the robot
+leaves its patrol for the goal and resumes the patrol afterwards.
 
 load_scenario(path, robot_id) picks that robot's part (the first robot if robot_id is None).
 
@@ -116,10 +118,22 @@ class Scenario:
     fleet_start_s: Optional[float] = None  # fleet scenarios: patrol / event time 0 = clock epoch + this
     waypoint_pauses: List[Optional[float]] = field(default_factory=list)  # per waypoint pause_s (None: default)
     launch_args: Dict[str, str] = field(default_factory=dict)  # sim.launch args run_fleet.py passes every robot
+    goals: List[dict] = field(default_factory=list)  # scripted goals {at, robot, x, y, theta} (fast sim)
 
     @property
     def is_fleet(self):
         return bool(self.robot_ids)
+
+
+def parse_goals(goals, path):
+    """Scripted goals [{at, robot, x, y, theta}] (fast simulator; the ROS sim ignores them), sorted by time."""
+    out = []
+    for g in goals or []:
+        if not isinstance(g, dict) or not all(k in g for k in ("at", "x", "y")):
+            raise ValueError("%s: goal %r needs at, x, y (and robot for fleets)" % (path, g))
+        out.append({"at": float(g["at"]), "robot": int(g["robot"]) if "robot" in g else None, "x": float(g["x"]),
+                    "y": float(g["y"]), "theta": float(g.get("theta", 0.0))})
+    return sorted(out, key=lambda g: g["at"])
 
 
 def parse_expect(expect, path):
@@ -207,4 +221,5 @@ def load_scenario(path, robot_id=None):
                          for w in part.get("waypoints", [])],
         launch_args={str(k): str(v).lower() if isinstance(v, bool) else str(v)
                      for k, v in (d.get("launch_args") or {}).items()},
+        goals=parse_goals(d.get("goals"), path),
     )

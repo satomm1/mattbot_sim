@@ -1,0 +1,147 @@
+{
+ "scenario": "detour_present",
+ "source": "ROS sim (sim.launch / run_fleet.py), 2026-10-07",
+ "summaries": [
+  {
+   "true_objects": [
+    "cone_1",
+    "cone_9"
+   ],
+   "true_removals": 0,
+   "ledger_objects_added": 2,
+   "spurious_ledger_objects": 0,
+   "correct_removals": 0,
+   "false_removals": 0,
+   "removal_latency_s": null,
+   "stale_ledger_objects": [],
+   "observation_stops": {
+    "STARTED": 7,
+    "ENDED": 7,
+    "ABORTED": 0
+   },
+   "observation_outcomes": {
+    "PRESENT": 7,
+    "ABSENT": 0,
+    "INCONCLUSIVE": 0
+   },
+   "observation_stops_by_kind": {
+    "OPPORTUNISTIC": {
+     "STARTED": 4,
+     "ENDED": 4,
+     "ABORTED": 0
+    },
+    "DETOUR": {
+     "STARTED": 3,
+     "ENDED": 3,
+     "ABORTED": 0
+    }
+   },
+   "observation_outcomes_by_kind": {
+    "OPPORTUNISTIC": {
+     "PRESENT": 4,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "DETOUR": {
+     "PRESENT": 3,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    }
+   },
+   "detour_stops": 3,
+   "detours_started": 3,
+   "detours_reached": 3,
+   "detours_done": 3,
+   "detours_abandoned": 0,
+   "detours_cancelled": 0,
+   "detour_abandon_reasons": [],
+   "goal_resends": 0,
+   "goals_given_up": 0,
+   "wrong_observation_outcomes": 0,
+   "blockouts_still_present": [],
+   "blockout_clear_after_s": [],
+   "scenario": "detour_present",
+   "run_s": 620.4,
+   "run_wall_s": 621.3,
+   "loop_rates": {
+    "navigator": {
+     "nominal_hz": 10.0,
+     "mean_hz": 10.02,
+     "min_window_hz": 9.9
+    },
+    "detector": {
+     "nominal_hz": 5.0,
+     "mean_hz": 5.0,
+     "min_window_hz": 4.9
+    }
+   },
+   "loop_rates_ok": true,
+   "expectations": [
+    {
+     "key": "min_detour_stops",
+     "op": ">=",
+     "expected": 1.0,
+     "actual": 3,
+     "ok": true
+    },
+    {
+     "key": "min_observation_outcomes_by_kind.DETOUR.PRESENT",
+     "op": ">=",
+     "expected": 1.0,
+     "actual": 3,
+     "ok": true
+    },
+    {
+     "key": "observation_outcomes_by_kind.DETOUR.ABSENT",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "min_observation_outcomes_by_kind.OPPORTUNISTIC.PRESENT",
+     "op": ">=",
+     "expected": 1.0,
+     "actual": 4,
+     "ok": true
+    },
+    {
+     "key": "false_removals",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "wrong_observation_outcomes",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "detours_abandoned",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "goal_resends",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "loop_rates_ok",
+     "op": "==",
+     "expected": 1,
+     "actual": 1,
+     "ok": true
+    }
+   ],
+   "expectations_passed": true
+  }
+ ]
+}

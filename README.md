@@ -225,6 +225,69 @@ Each robot's `expect` is merged over the shared one. A waypoint may also set `pa
 CPU: every robot runs the whole stack plus 8 DDS processes. Watch `loop_rates_ok` in each robot's summary
 before raising `--speed` or adding robots.
 
+## Fast simulator (no ROS)
+
+`scripts/fastsim.py` runs the same scenarios without ROS, on one simulated clock. Examples:
+- `remove_one` (900 s) runs in about 5 s;
+- 3 robots for 600 s run in about 7 s;
+- 10 robots for 600 s run in about 20 s, using under 200 MB of memory.
+
+It is meant for parameter sweeps, many seeds and larger fleets. The ROS sim stays the integration test.
+
+```bash
+python3 mattbot_sim/scripts/fastsim.py run detour_present [-v] [--seed 3] [--out DIR]   # summary + expectations (exit code)
+python3 mattbot_sim/scripts/fastsim.py run fleet_share_removal_3 --set observe_cooldown_s=30
+python3 mattbot_sim/scripts/fastsim.py sweep detour_removed --grid observe_detour_n_trips=1,2,5 \
+    --grid observe_cooldown_s=30,60 --seeds 5 --jobs 5 --out sweep.csv      # + sweep_aggregate.csv
+python3 mattbot_sim/scripts/fastsim.py compare detour_present results/detour_present_*.json   # vs ROS runs
+```
+
+To see a run, add `--gif run.gif` (an animation with one frame every `--frame-every` simulated seconds,
+default 2) and/or `--png run.png` (an overview with each robot's track and where it checked what). Both are
+made with matplotlib and Pillow (`fast/viz.py`); a 600 s run takes about half a minute to render.
+
+`--set` / `--grid` take the `sim.launch` arg names (`mattbot_sim/fast/params.py`), and a scenario's
+`launch_args` apply too. Results JSON is in the same format as `sim_monitor`'s, and expectations work the
+same way. No ROS environment is needed: `mattbot_sim/fast/imports.py` finds the robot libraries in the
+workspace.
+
+**Same decisions as the robot.** The fast sim calls the same libraries as the ROS nodes:
+- check policy, stop selection, detours, roadmap and importance (`navigation_utils`);
+- A* and trajectory smoothing (`navigation_utils.search`, `compute_smoothed_traj`);
+- ledger and belief (`dds_utils.ledger`, `dds_utils.belief`);
+- PRESENT / ABSENT decisions (`observation_eval.evidence`);
+- world, perception and scoring (`mattbot_sim`).
+
+Only the ROS glue is re-implemented, following the nodes:
+- `fast/navigator.py`: the navigator's modes, stop and detour rules, and the order of its TRACK checks, so its
+  quirks carry over.
+- `fast/mapper.py`: confirm after 7 sightings, blockouts with a 30 s lifetime that expire only while IDLE,
+  then re-confirmation.
+- `fast/checker.py`: the planner's `select_srv` and the evaluator's windows.
+- `fast/fleet.py`: the ledger node and the belief map.
+
+**Differences from the ROS sim.**
+- **Motion is kinematic.** The robot sits exactly on its trajectory at the tracker's reference time (with the
+  soft-start lag). Turns and parking use the navigator's controllers.
+- **Not modelled:** the 20 s localization at start, waypoint deadlines and the recovery chain, stall
+  detection, people, localization error, and message latency.
+- **One fleet ledger** with instant, lossless communication. A robot's confirmation also reaches the other
+  robots' mappers.
+- **Robots see and block each other** (the ROS sim can't do this). Robots occlude each other's camera. A
+  robot that would drive into another waits, and after `block_wait_s` (3 s) replans around it, as A* does
+  with other robots. The real navigator does not stop for other robots.
+- **Fleet scenarios start together**, so `fleet_start_s` is not used. Scripted `goals: [{at, robot, x, y,
+  theta}]` pre-empt a patrol. `--orchestrator package.module:Class` replaces the patrol logic with your own
+  (see `fast/orchestrator.py`).
+
+**Kept honest.** `test/test_fast_matches_ros.py` runs the scenarios recorded in `test/fixtures/ros/` (ROS
+sim summaries) in the fast sim. It checks that the number of checks, outcomes, removals and removal latency
+agree within tolerance. `test/test_fast_scenarios.py` runs every shipped scenario and checks its expectations.
+After a change to the robot code:
+1. re-run the ROS sim on those scenarios;
+2. copy the new summaries into `fixtures/ros/`;
+3. if the tests then fail, fix the fast model, not the tolerances.
+
 ## Results
 
 `sim_monitor` compares `/object_beliefs` (the active ledger objects) and `/observation/results` with the ground truth
@@ -253,7 +316,7 @@ expect:
 ## Tests
 
 ```bash
-python3 -m pytest mattbot_sim/test        # from src/, no ROS needed
+python3 -m pytest mattbot_sim/test        # from src/, no ROS needed (about a minute: the fast-sim scenario runs)
 ```
 
 `test_detour_scenarios.py` also needs `mattbot_navigation/src` and `path_planning/src`. It adds them itself

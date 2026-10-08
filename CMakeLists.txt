@@ -14,6 +14,7 @@ catkin_install_python(PROGRAMS
   scripts/sim_monitor.py
   scripts/check_detour_scenario.py
   scripts/run_fleet.py
+  scripts/fastsim.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 install(PROGRAMS scripts/sim_rviz.sh DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

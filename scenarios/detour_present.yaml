@@ -8,6 +8,7 @@
 # Offline: rosrun mattbot_sim check_detour_scenario.py $(rospack find mattbot_sim)/scenarios/detour_present.yaml
 name: detour_present
 map: current_map
+launch_args: {observe_detour: true}   # fast sim and run_fleet.py; for sim.launch pass observe_detour:=true
 start: {x: 28.0, y: 18.95, theta: 0.0}
 objects:
   - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true, detour: expected}
