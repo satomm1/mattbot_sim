@@ -1,0 +1,154 @@
+{
+ "scenario": "scout_present",
+ "source": "ROS sim (sim.launch observe_scout:=true speed:=2), 2026-10-14",
+ "summaries": [
+  {
+   "true_objects": [
+    "cone_9"
+   ],
+   "true_removals": 0,
+   "ledger_objects_added": 1,
+   "spurious_ledger_objects": 0,
+   "correct_removals": 0,
+   "false_removals": 0,
+   "removal_latency_s": null,
+   "stale_ledger_objects": [],
+   "observation_stops": {
+    "STARTED": 0,
+    "ENDED": 0,
+    "ABORTED": 0
+   },
+   "observation_outcomes": {
+    "PRESENT": 0,
+    "ABSENT": 0,
+    "INCONCLUSIVE": 0
+   },
+   "observation_stops_by_kind": {
+    "OPPORTUNISTIC": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "DETOUR": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "SCOUT": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    }
+   },
+   "observation_outcomes_by_kind": {
+    "OPPORTUNISTIC": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "DETOUR": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "SCOUT": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    }
+   },
+   "detour_stops": 0,
+   "detours_started": 0,
+   "detours_reached": 0,
+   "detours_done": 0,
+   "detours_abandoned": 0,
+   "detours_cancelled": 0,
+   "detour_abandon_reasons": [],
+   "goal_resends": 0,
+   "goals_given_up": 0,
+   "wrong_observation_outcomes": 0,
+   "blockouts_still_present": [],
+   "blockout_clear_after_s": [],
+   "scout_decisions": 56,
+   "scout_go_decisions": 52,
+   "scout_go_not_idle": 0,
+   "scout_go_by_object": {
+    "cone_9": 52
+   },
+   "scout_first_go_s_by_object": {
+    "cone_9": 45.6
+   },
+   "scout_best_net_m_by_object": {
+    "cone_9": 8.51
+   },
+   "scenario": "scout_present",
+   "run_s": 332.5,
+   "run_wall_s": 163.9,
+   "loop_rates": {
+    "navigator": {
+     "nominal_hz": 10.0,
+     "mean_hz": 9.99,
+     "min_window_hz": 9.6
+    },
+    "detector": {
+     "nominal_hz": 5.0,
+     "mean_hz": 5.0,
+     "min_window_hz": 4.9
+    }
+   },
+   "loop_rates_ok": true,
+   "expectations": [
+    {
+     "key": "min_scout_decisions",
+     "op": ">=",
+     "expected": 1.0,
+     "actual": 56,
+     "ok": true
+    },
+    {
+     "key": "min_scout_go_by_object.cone_9",
+     "op": ">=",
+     "expected": 1.0,
+     "actual": 52,
+     "ok": true
+    },
+    {
+     "key": "scout_go_not_idle",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "detours_started",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "false_removals",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "goal_resends",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "loop_rates_ok",
+     "op": "==",
+     "expected": 1,
+     "actual": 1,
+     "ok": true
+    }
+   ],
+   "expectations_passed": true
+  }
+ ]
+}

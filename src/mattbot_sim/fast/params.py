@@ -21,6 +21,16 @@ class FastParams:
     observe_detour_n_trips: float = 5.0
     observe_detour_margin_m: float = 0.0
     observe_detour_timeout_factor: float = 2.0
+    observe_scout: bool = False  # scout decisions while idle (decision only: nothing drives a scout)
+    observe_max_scout_m: float = 30.0
+    observe_scout_n_trips: float = 5.0
+    observe_scout_margin_m: float = 0.0
+    observe_scout_min_idle_s: float = 10.0
+    observe_scout_period_s: float = 5.0
+    observe_scout_cost_model: str = "travel_time"
+    observe_scout_round_trip: bool = True
+    observe_scout_fixed_s: float = 0.0
+    observe_scout_per_s_away: float = 0.0
     miss_prob: float = 0.0
     pos_noise_std: float = 0.0
     false_pos_rate: float = 0.0

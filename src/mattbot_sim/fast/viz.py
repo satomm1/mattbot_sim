@@ -110,11 +110,17 @@ def render_png(sim, frames, path):
             marker, mc = OUTCOME_MARKERS.get(res["outcome"], ("o", "k"))
             if stop.get("robot_xy"):
                 ax.scatter(*stop["robot_xy"], marker=marker, c=mc, edgecolors=c, s=50, zorder=5)
+        # Scout decisions (decision only): each object's latest GO viewpoint and the route the scout would drive
+        for k_s, res in enumerate(r.planner.scout_chosen.values()):
+            if len(res.route_xy) >= 2:
+                ax.plot(res.route_xy[:, 0], res.route_xy[:, 1], ls=":", color=c, lw=1.2, zorder=5)
+            ax.scatter(*res.viewpoint_xy, marker="*", s=140, c="gold", edgecolors=c, zorder=6,
+                       label="robot %d scout GO viewpoint" % rid if k_s == 0 else None)
     for o in sim.world.objects.values():
         ax.scatter([o.x], [o.y], s=70, marker="s", c="green" if o.present else "lightgrey", edgecolors="k", zorder=4)
         ax.annotate(o.object_id, (o.x, o.y), fontsize=7, xytext=(3, 3), textcoords="offset points")
     ax.legend(loc="upper right", fontsize=7)
     ax.set_title("%s: tracks and checks (o present, X absent, s inconclusive, at the robot's position); "
-                 "grey square = removed" % sim.scenario.name, fontsize=9)
+                 "grey square = removed; star = scout GO viewpoint" % sim.scenario.name, fontsize=9)
     fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)

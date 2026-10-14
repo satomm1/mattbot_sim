@@ -1,8 +1,9 @@
 """The observation planner and evaluator nodes, as library calls.
 
-ObservationCore (shared by the fleet): viewsheds on the static /map, the roadmap / detour planner and the
-importance I_o of every ledger object, all robot-independent. CheckPlanner (per robot): its ThresholdPolicy
-(per-robot cooldowns) and select(), following observation_planner.select_srv. Evaluator (per robot):
+ObservationCore (shared by the fleet): viewsheds on the static /map, the roadmap / detour / scout planners and
+the importance I_o of every ledger object, all robot-independent. CheckPlanner (per robot): its ThresholdPolicy
+(per-robot cooldowns), select(), following observation_planner.select_srv, and evaluate_scout(), following
+observation_planner.evaluate_scout. Evaluator (per robot):
 observation windows, following observation_evaluator.py (use_depth off): frame_verdict per detector frame,
 window_outcome at the end, then PRESENT -> confirm, ABSENT -> remove, and re-sightings of other objects.
 """
@@ -16,7 +17,9 @@ from typing import Dict, List
 import numpy as np
 
 from mattbot_sim.fast import imports  # noqa: F401
-from navigation_utils.observation_policy import DETOUR, Candidate, DetourValueParams, ThresholdPolicy
+from navigation_utils.observation_policy import (
+    DETOUR, SCOUT_COST_MODELS, Candidate, DetourValueParams, ScoutValueParams, ThresholdPolicy,
+)
 from navigation_utils.viewpoints import blocking_mask, compute_viewshed, nearby_blockers
 from observation_eval.evidence import (
     OUTCOME_ABSENT, OUTCOME_PRESENT, CameraPose, Detection, EvalParams, Intrinsics, Target, frame_verdict,
@@ -52,8 +55,9 @@ class ObservationCore:
         self.blocking = blocking_mask(np.asarray(grid.occupancy).ravel(), grid.width, grid.height)
         self.viewsheds = {}  # object_id -> (Viewshed, signature)
         self.detour_planner = None
+        self.scout_planner = None
         self.tracker = None
-        if params.observe_detour:
+        if params.observe_detour or params.observe_scout:  # both need I_o (observation_planner RoadmapWorker)
             self._build_importance(cache_dir)
 
     def _build_importance(self, cache_dir):
@@ -69,6 +73,10 @@ class ObservationCore:
         roadmap, _cached = load_or_build_roadmap(*occupancy_tuple(self.grid), params=RoadmapParams(robot_radius=0.4),
                                                  cache_dir=cache_dir)
         self.detour_planner = DetourPlanner(roadmap)
+        if self.params.observe_scout:
+            from navigation_utils.scout import ScoutPlanner
+
+            self.scout_planner = ScoutPlanner(self.detour_planner)
         iparams = ImportanceParams()  # observation_planner defaults
         self.tracker = ObjectImportanceTracker(ImportanceEvaluator(roadmap, build_trip_set(roadmap, iparams), iparams))
 
@@ -120,7 +128,15 @@ class CheckPlanner:
             self.policy.detour_params = DetourValueParams(
                 n_trips=p.observe_detour_n_trips, conclusive_prob=1.0, margin_m=p.observe_detour_margin_m,
                 max_detours_per_path=1, hard_cap_m=p.observe_max_detour_m)
+            if p.observe_scout:  # observation_planner.init_scout
+                self.policy.scout_params = ScoutValueParams(
+                    n_trips=p.observe_scout_n_trips, conclusive_prob=1.0, margin_m=p.observe_scout_margin_m,
+                    max_scouts=1, hard_cap_m=p.observe_max_scout_m)
+                self.policy.scout_cost = SCOUT_COST_MODELS[p.observe_scout_cost_model](
+                    round_trip=p.observe_scout_round_trip, fixed_s=p.observe_scout_fixed_s,
+                    per_s_away=p.observe_scout_per_s_away)
         self.detour_log = []  # (object ids, detour_m, V, C, chosen, blocked) of the last request
+        self.scout_chosen = {}  # object_id -> ScoutResult of its latest GO (for the PNG)
 
     def record_check(self, object_id, t):
         self.policy.record_check(object_id, t)
@@ -157,6 +173,43 @@ class CheckPlanner:
         return [StopRequest(o.kind, o.resume, o.path_index, o.stop.x, o.stop.y, o.stop.heading,
                             [c.object_id for c in o.candidates], [(c.x, c.y) for c in o.candidates], o.cost_s)
                 for o in options]
+
+    def evaluate_scout(self, pose, beliefs, now, idle):
+        """observation_planner.evaluate_scout from pose (x, y, theta) -> decision dict (scoring.add_scout_decision).
+        With idle False nothing is chosen (as the planner's periodic decision)."""
+        core, pol = self.core, self.policy
+        decision = {"idle": bool(idle), "go": False, "candidates": []}
+        if core.scout_planner is None:
+            return decision
+        from navigation_utils.scout import ScoutParams
+
+        p = core.params
+        cands = [Candidate(b.object_id, b.class_name, b.x, b.y, b.belief, b.width) for b in beliefs]
+        eligible = [c for c in cands if pol.scout_eligible(c, now)]
+        core.ensure_viewsheds(eligible, cands)
+        views = {oid: vs for oid, (vs, _sig) in core.viewsheds.items()}
+        targets = {}
+        for c in eligible:
+            limit = pol.max_scout_m(c)
+            if limit > 0:
+                targets[c.object_id] = (c.x, c.y, core.detour_planner.viewpoint_nodes(views[c.object_id]), limit)
+        results = core.scout_planner.compute((pose[0], pose[1]), targets,
+                                             ScoutParams(max_scout_m=p.observe_max_scout_m, r_max=p.r_max),
+                                             start_heading=pose[2])
+        _chosen, evaluations = pol.scout_options((pose[0], pose[1]), cands, views, now, (), results)
+        for ev in sorted(evaluations, key=lambda e: -e.net_m):
+            chosen = ev.chosen and idle
+            if chosen:
+                for oid in ev.object_ids:
+                    self.scout_chosen[oid] = ev.source
+            decision["candidates"].append({
+                "object_ids": list(ev.object_ids), "chosen": chosen, "value_m": ev.value_m, "cost_m": ev.cost_m,
+                "net_m": ev.net_m, "to_view_m": ev.source.to_view_m,
+                "opportunity_m": ev.breakdown.get("fixed_m", 0.0) + ev.breakdown.get("away_m", 0.0),
+                "t_away_s": ev.breakdown.get("t_away_s", 0.0),
+            })
+        decision["go"] = any(c["chosen"] for c in decision["candidates"])
+        return decision
 
 
 @dataclass

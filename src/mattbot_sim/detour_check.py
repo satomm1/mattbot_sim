@@ -90,41 +90,58 @@ def camera_sees(world, path_xy, obj, max_range=5.0, step_m=0.25):
     return False
 
 
+class _Setup:
+    """What the observation planner holds for a scenario: map, roadmap, detour planner, I_o, viewsheds, policy."""
+
+    def __init__(self, scenario, map_json_dir, cache_dir, r_min, r_max, robot_radius, cruise_speed, dwell_s,
+                 object_ids=None, **policy_kwargs):
+        from navigation_utils.detour import DetourPlanner
+        from navigation_utils.obstacle_importance import ImportanceEvaluator, ImportanceParams, build_trip_set
+        from navigation_utils.observation_policy import ThresholdPolicy
+        from navigation_utils.roadmap import RoadmapParams, load_or_build_roadmap
+        from navigation_utils.viewpoints import blocking_mask, compute_viewshed, nearby_blockers
+
+        self.grid, _grid_mod = load_maps(scenario.map, map_json_dir)  # the planner sees /map, not /map_mod
+        occupancy = occupancy_tuple(self.grid)
+        data, width, height, res, origin = occupancy
+        self.roadmap, _cached = load_or_build_roadmap(*occupancy, params=RoadmapParams(robot_radius=robot_radius),
+                                                      cache_dir=cache_dir)
+        self.planner = DetourPlanner(self.roadmap)
+        iparams = ImportanceParams()  # observation_planner defaults: 50 random landmarks, uniform trips
+        evaluator = ImportanceEvaluator(self.roadmap, build_trip_set(self.roadmap, iparams), iparams,
+                                        cache_dir=cache_dir)
+        self.policy = ThresholdPolicy(cruise_speed=cruise_speed, dwell_s=dwell_s, **policy_kwargs)
+        self.objects = [o for o in scenario.objects if object_ids is None or o.object_id in object_ids]
+        all_objects = [(o.object_id, o.x, o.y, o.width) for o in scenario.objects]
+        blocking = blocking_mask(data, width, height)
+        self.world = World(self.grid, scenario.objects)
+        self.importance = {o.object_id: evaluator.evaluate_square(o.object_id, o.x, o.y, o.width).I_o
+                           for o in self.objects}
+        self.policy.importance_fn = self.policy.importance_m_fn = lambda c: self.importance[c.object_id]
+        self.views = {}
+        for o in self.objects:
+            blockers, _sig = nearby_blockers(o.object_id, (o.x, o.y), all_objects, r_max + 1.0)
+            self.views[o.object_id] = compute_viewshed(blocking, (o.x, o.y), origin, res, r_min, r_max,
+                                                       blockers=blockers)
+
+    def candidate(self, o):
+        from navigation_utils.observation_policy import Candidate
+
+        return Candidate(o.object_id, o.class_name, o.x, o.y, 0.0, o.width)  # belief 0: fully decayed
+
+
 def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0, max_detour_m=15.0,
                    r_min=1.0, r_max=3.5, robot_radius=0.4, cruise_speed=0.4, dwell_s=4.0, skip_start_m=1.0,
                    skip_goal_m=1.0, object_ids=None):
     """ObjectResult per scenario object (or per ``object_ids``)."""
-    from navigation_utils.detour import DetourParams, DetourPlanner
-    from navigation_utils.obstacle_importance import ImportanceEvaluator, ImportanceParams, build_trip_set
-    from navigation_utils.observation_policy import Candidate, DetourValueParams, ThresholdPolicy
-    from navigation_utils.roadmap import RoadmapParams, load_or_build_roadmap
-    from navigation_utils.viewpoints import blocking_mask, compute_viewshed, nearby_blockers
+    from navigation_utils.detour import DetourParams
+    from navigation_utils.observation_policy import DetourValueParams
 
-    grid, _grid_mod = load_maps(scenario.map, map_json_dir)  # the planner sees /map, not /map_mod
-    occupancy = occupancy_tuple(grid)
-    data, width, height, res, origin = occupancy
-    roadmap, _cached = load_or_build_roadmap(*occupancy, params=RoadmapParams(robot_radius=robot_radius),
-                                             cache_dir=cache_dir)
-    planner = DetourPlanner(roadmap)
-    iparams = ImportanceParams()  # observation_planner defaults: 50 random landmarks, uniform trips
-    evaluator = ImportanceEvaluator(roadmap, build_trip_set(roadmap, iparams), iparams, cache_dir=cache_dir)
-    policy = ThresholdPolicy(cruise_speed=cruise_speed, dwell_s=dwell_s,
-                             detour_params=DetourValueParams(n_trips=n_trips, margin_m=margin_m,
-                                                             hard_cap_m=max_detour_m, skip_start_m=skip_start_m,
-                                                             skip_goal_m=skip_goal_m))
+    setup = _Setup(scenario, map_json_dir, cache_dir, r_min, r_max, robot_radius, cruise_speed, dwell_s, object_ids,
+                   detour_params=DetourValueParams(n_trips=n_trips, margin_m=margin_m, hard_cap_m=max_detour_m,
+                                                   skip_start_m=skip_start_m, skip_goal_m=skip_goal_m))
+    planner, policy, views = setup.planner, setup.policy, setup.views
     dparams = DetourParams(max_detour_m=max_detour_m, r_max=r_max)
-
-    objects = [o for o in scenario.objects if object_ids is None or o.object_id in object_ids]
-    all_objects = [(o.object_id, o.x, o.y, o.width) for o in scenario.objects]
-    blocking = blocking_mask(data, width, height)
-    world = World(grid, scenario.objects)
-    importance = {o.object_id: evaluator.evaluate_square(o.object_id, o.x, o.y, o.width).I_o for o in objects}
-    policy.importance_fn = policy.importance_m_fn = lambda c: importance[c.object_id]
-
-    views = {}
-    for o in objects:
-        blockers, _sig = nearby_blockers(o.object_id, (o.x, o.y), all_objects, r_max + 1.0)
-        views[o.object_id] = compute_viewshed(blocking, (o.x, o.y), origin, res, r_min, r_max, blockers=blockers)
 
     paths = []
     for a, b in patrol_legs(scenario):
@@ -133,11 +150,11 @@ def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0,
             paths.append(("(%.1f, %.1f) -> (%.1f, %.1f)" % (a + b), np.asarray(path)))
 
     results = []
-    for o in objects:
-        c = Candidate(o.object_id, o.class_name, o.x, o.y, 0.0, o.width)
+    for o in setup.objects:
+        c = setup.candidate(o)
         vs = views[o.object_id]
-        r = ObjectResult(o.object_id, importance[o.object_id],
-                         any(camera_sees(world, p, o) for _name, p in paths))
+        r = ObjectResult(o.object_id, setup.importance[o.object_id],
+                         any(camera_sees(setup.world, p, o) for _name, p in paths))
         for name, path in paths:
             leg = LegResult(name, policy.checkable_from_path(path, vs))
             if not leg.visible_from_path:
@@ -182,3 +199,147 @@ def format_results(results):
                 head, fmt(leg.d_star), leg.leg, fmt(leg.detour_m), fmt(leg.value_m), fmt(leg.cost_m),
                 fmt(leg.net_m), decision))
     return "\n".join(lines)
+
+
+# ---------- Scouts (decision only) ----------
+
+
+@dataclass
+class ScoutPoseResult:
+    pose: tuple  # (x, y, theta) where the robot sits idle
+    why: str  # why it idles there ("start", "pause 15 s", "end of patrol")
+    max_m: Optional[float] = None  # search limit (one way)
+    to_view_m: Optional[float] = None
+    value_m: Optional[float] = None
+    cost_m: Optional[float] = None
+    opportunity_m: Optional[float] = None
+    t_away_s: Optional[float] = None
+    viewpoint: Optional[tuple] = None
+    go: bool = False
+
+    @property
+    def net_m(self):
+        return None if self.value_m is None else self.value_m - self.cost_m
+
+
+@dataclass
+class ScoutObjectResult:
+    object_id: str
+    importance_m: float
+    poses: List[ScoutPoseResult] = field(default_factory=list)
+
+    @property
+    def scout_go(self):
+        return any(p.go for p in self.poses)
+
+
+def idle_poses(scenario, min_idle_s, idle_settle_s=1.5, default_pause_s=2.0):
+    """[(pose, why)] where the robot sits IDLE at least min_idle_s (scenario_runner: settle, then the pause):
+    the start if there are no waypoints, waypoints whose pause is long enough, the last one if not looping."""
+    wps = scenario.waypoints
+    if not wps:
+        return [((scenario.start.x, scenario.start.y, scenario.start.theta), "start (no waypoints)")]
+    out = []
+    pauses = scenario.waypoint_pauses or [None] * len(wps)
+    for k, (w, pause) in enumerate(zip(wps, pauses)):
+        last = k == len(wps) - 1
+        if last and not scenario.loop:
+            out.append(((w.x, w.y, w.theta), "end of patrol"))
+        elif (default_pause_s if pause is None else pause) + idle_settle_s >= min_idle_s:
+            out.append(((w.x, w.y, w.theta), "pause %.0f s" % (default_pause_s if pause is None else pause)))
+    return out
+
+
+def scout_params_of(scenario, **overrides):
+    """FastParams for the scenario's launch_args (same names and defaults as sim.launch), then overrides."""
+    from mattbot_sim.fast.params import FastParams
+
+    params = FastParams().update(scenario.launch_args)
+    return params.update({k: v for k, v in overrides.items() if v is not None})
+
+
+def check_scout(scenario, map_json_dir, cache_dir, params=None, r_min=1.0, r_max=3.5, robot_radius=0.4,
+                object_ids=None):
+    """ScoutObjectResult per scenario object: would an idle robot be sent to check it (belief 0)?
+    ``params``: FastParams (default: scout_params_of(scenario))."""
+    from navigation_utils.observation_policy import SCOUT_COST_MODELS, ScoutValueParams
+    from navigation_utils.scout import ScoutParams, ScoutPlanner
+
+    p = params or scout_params_of(scenario)
+    setup = _Setup(scenario, map_json_dir, cache_dir, r_min, r_max, robot_radius, p.cruising_velocity,
+                   p.observe_dwell_s, object_ids,
+                   scout_params=ScoutValueParams(n_trips=p.observe_scout_n_trips, margin_m=p.observe_scout_margin_m,
+                                                 hard_cap_m=p.observe_max_scout_m),
+                   scout_cost=SCOUT_COST_MODELS[p.observe_scout_cost_model](
+                       round_trip=p.observe_scout_round_trip, fixed_s=p.observe_scout_fixed_s,
+                       per_s_away=p.observe_scout_per_s_away))
+    scout = ScoutPlanner(setup.planner)
+    sparams = ScoutParams(max_scout_m=p.observe_max_scout_m, r_max=r_max)
+    poses = idle_poses(scenario, p.observe_scout_min_idle_s)
+    results = []
+    for o in setup.objects:
+        c, vs = setup.candidate(o), setup.views[o.object_id]
+        r = ScoutObjectResult(o.object_id, setup.importance[o.object_id])
+        for pose, why in poses:
+            pr = ScoutPoseResult(tuple(round(v, 2) for v in pose), why, max_m=setup.policy.max_scout_m(c))
+            if pr.max_m > 0:
+                found = scout.compute(pose[:2], {o.object_id: (o.x, o.y, scout.viewpoint_nodes(vs), pr.max_m)},
+                                      sparams, start_heading=pose[2])
+                _chosen, evaluations = setup.policy.scout_options(pose[:2], [c], {o.object_id: vs}, 0.0,
+                                                                  scouts=found)
+                if evaluations:
+                    ev = evaluations[0]
+                    pr.to_view_m, pr.value_m, pr.cost_m = ev.source.to_view_m, ev.value_m, ev.cost_m
+                    pr.opportunity_m = ev.breakdown.get("fixed_m", 0.0) + ev.breakdown.get("away_m", 0.0)
+                    pr.t_away_s = ev.breakdown.get("t_away_s")
+                    pr.viewpoint = (round(ev.option.stop.x, 2), round(ev.option.stop.y, 2))
+                    pr.go = bool(ev.chosen)
+            r.poses.append(pr)
+        results.append(r)
+    return results
+
+
+def format_scout_results(results):
+    lines = ["%-12s %6s  %-24s %-20s %6s %6s %6s %6s %6s  %s" % (
+        "object", "I_o", "idle at", "why", "max", "dist", "V", "C", "V-C", "decision")]
+    fmt = lambda v: "-" if v is None else "%.1f" % v  # noqa: E731
+    for r in results:
+        if not r.poses:
+            lines.append("%-12s %6.2f  (the robot never sits idle long enough)" % (r.object_id, r.importance_m))
+        for k, pr in enumerate(r.poses):
+            head = "%-12s %6.2f" % (r.object_id, r.importance_m) if k == 0 else " " * 19
+            if pr.max_m is not None and pr.max_m <= 0:
+                decision = "never worth a scout (limit <= 0)"
+            elif pr.value_m is None:
+                decision = "no viewpoint within the limit"
+            elif pr.go:
+                decision = "GO -> viewpoint (%.2f, %.2f), away %.0f s, opp %.1f m" % (
+                    pr.viewpoint + (pr.t_away_s, pr.opportunity_m))
+            else:
+                decision = "skip (V - C <= margin)"
+            lines.append("%s  %-24s %-20s %6s %6s %6s %6s %6s  %s" % (
+                head, "(%.1f, %.1f)" % pr.pose[:2], pr.why, fmt(pr.max_m), fmt(pr.to_view_m), fmt(pr.value_m),
+                fmt(pr.cost_m), fmt(pr.net_m), decision))
+    return "\n".join(lines)
+
+
+def scout_failures(scenario, results, map_json_dir):
+    """Reasons a scenario's ``scout:`` annotations do not hold ([] = they hold)."""
+    grid, _grid_mod = load_maps(scenario.map, map_json_dir)
+    world = World(grid, scenario.objects)
+    objects = {o.object_id: o for o in scenario.objects}
+    failures = []
+    for r in results:
+        want = scenario.scout.get(r.object_id)
+        if not want:
+            continue
+        if not r.poses:
+            failures.append("%s: the robot never sits idle long enough to decide on a scout" % r.object_id)
+        elif want == "expected" and not r.scout_go:
+            failures.append("%s: expected a scout, but none of the idle poses would send one" % r.object_id)
+        elif want == "declined" and r.scout_go:
+            failures.append("%s: expected no scout, but an idle pose would send one" % r.object_id)
+        if any(camera_sees(world, [pr.pose[:2]], objects[r.object_id]) for pr in r.poses):
+            failures.append("%s: the sim camera can see it from an idle pose (within 5 m), so the robot may "
+                            "re-sight it instead of deciding on a scout" % r.object_id)
+    return failures

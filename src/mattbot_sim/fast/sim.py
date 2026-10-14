@@ -47,6 +47,7 @@ class Robot:
     turn_gate: TurnGate = field(default_factory=TurnGate)
     nav: FastNavigator = None
     idle_since: float = 0.0
+    scout_idle: bool = None  # idle flag of the last scout decision (None = none yet)
     log: List[dict] = field(default_factory=list)
     stops: List[dict] = field(default_factory=list)
 
@@ -102,6 +103,7 @@ class FastSim:
         self.orchestrator = orchestrator or PatrolOrchestrator()
         self.next_detect = 0.0
         self.next_second = 0.0
+        self.next_scout = p.observe_scout_period_s  # observation_planner scout_timer (first tick after a period)
         self.wall_s = 0.0
         self.frames = None  # a list -> viz.snapshot() every frame_every s (for --gif / --png)
         self.frame_every = 2.0
@@ -215,6 +217,27 @@ class FastSim:
             for line in r.scorer.update_blockouts(self.now, r.mapper.is_blocked):
                 self.note(r, line)
 
+    def scout_tick(self):
+        """observation_planner.scout_timer: evaluate scouts from the pose of each robot idle long enough;
+        a not-idle decision is recorded only when the robot stops being idle (as the planner publishes it)."""
+        p = self.params
+        beliefs = None
+        for r in self.robots.values():
+            idle = r.nav.mode == "IDLE" and self.now - r.idle_since >= p.observe_scout_min_idle_s
+            if not idle:
+                if r.scout_idle is not False:
+                    line = r.scorer.add_scout_decision(self.now, {"idle": False, "go": False, "candidates": []})
+                    if line:
+                        self.note(r, line)
+                    r.scout_idle = False
+                continue
+            beliefs = self.beliefs() if beliefs is None else beliefs
+            decision = r.planner.evaluate_scout((r.pose.x, r.pose.y, r.pose.theta), beliefs, self.now, True)
+            line = r.scorer.add_scout_decision(self.now, decision)
+            if line:
+                self.note(r, line)
+            r.scout_idle = True
+
     def step(self):
         self.apply_events()
         self.orchestrator.on_tick(self)
@@ -231,6 +254,9 @@ class FastSim:
         if self.now + 1e-9 >= self.next_second:
             self.every_second()
             self.next_second += 1.0
+        if self.params.observe_scout and self.now + 1e-9 >= self.next_scout:
+            self.scout_tick()
+            self.next_scout += self.params.observe_scout_period_s
         if self.frames is not None and self.now + 1e-9 >= self.next_frame:
             from mattbot_sim.fast.viz import snapshot
 

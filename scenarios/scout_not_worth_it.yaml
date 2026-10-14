@@ -1,0 +1,20 @@
+# Scout decision (decision only). cone_8 is hidden in the dead-end room south of the corridor's east end:
+# nothing routes through the room, so I_o ~ 0 and a scout is never worth it, however long the robot idles.
+# The robot drives one leg and then sits idle in the corridor (loop: false); the planner must decline.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_not_worth_it observe_scout:=true
+name: scout_not_worth_it
+map: current_map
+launch_args: {observe_scout: true}   # fast sim and run_fleet.py; for sim.launch pass observe_scout:=true
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_8, class: cone, x: 44.0, y: 15.0, width: 0.4, known_from_peer: true, scout: declined}
+waypoints:
+  - {x: 36.0, y: 18.95, theta: 0.0}
+loop: false
+duration: 300
+expect:
+  min_scout_decisions: 1
+  scout_go_decisions: 0
+  scout_go_not_idle: 0
+  false_removals: 0
+  goal_resends: 0

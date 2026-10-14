@@ -1,0 +1,23 @@
+# Scout decision (decision only). The detour_present patrol with scouts on and detours off: the robot pauses
+# only about 3.5 s at each waypoint (settle + pause_s), less than observe_scout_min_idle_s (10 s), so it is
+# never idle long enough to decide on a scout. cone_9 would be worth one (see scout_present).
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_patrol_busy observe_scout:=true
+name: scout_patrol_busy
+map: current_map
+launch_args: {observe_scout: true}   # fast sim and run_fleet.py; for sim.launch pass observe_scout:=true
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+  - {id: cone_1, class: cone, x: 40.0, y: 18.15, width: 0.3}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 22.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 400
+expect:
+  scout_decisions: 0
+  scout_go_decisions: 0
+  scout_go_not_idle: 0
+  min_observation_outcomes_by_kind.OPPORTUNISTIC.PRESENT: 1
+  false_removals: 0
+  goal_resends: 0

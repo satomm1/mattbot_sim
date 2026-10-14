@@ -48,6 +48,19 @@
   <arg name="observe_landmarks_file" default=""/>
   <!-- Navigator detour deadline: timeout_factor * estimated cost + 20 s -->
   <arg name="observe_detour_timeout_factor" default="2.0"/>
+  <!-- Scouts (decision only): while the robot is idle, observation_planner decides whether to drive out only
+       to check an object (/observation/scout; scored by sim_monitor). Off by default; the scout_* scenarios need
+       observe_scout:=true. Cost: out and back + turn and dwell + v * (fixed_s + per_s_away * time away). -->
+  <arg name="observe_scout" default="false"/>
+  <arg name="observe_max_scout_m" default="30.0"/>
+  <arg name="observe_scout_n_trips" default="5"/>
+  <arg name="observe_scout_margin_m" default="0.0"/>
+  <arg name="observe_scout_min_idle_s" default="10.0"/>
+  <arg name="observe_scout_period_s" default="5.0"/>
+  <arg name="observe_scout_cost_model" default="travel_time"/>
+  <arg name="observe_scout_round_trip" default="true"/>
+  <arg name="observe_scout_fixed_s" default="0.0"/>
+  <arg name="observe_scout_per_s_away" default="0.0"/>
   <arg name="roadmap_cache_dir" default="$(env HOME)/.ros/mattbot_roadmap"/>
 
   <!-- Simulated time: sim_world publishes /clock and runs it at speed x real time (all nodes follow ROS time).
@@ -95,10 +108,20 @@
     <arg name="observe_detour_n_trips" value="$(arg observe_detour_n_trips)"/>
     <arg name="observe_detour_margin_m" value="$(arg observe_detour_margin_m)"/>
     <arg name="observe_landmarks_file" value="$(arg observe_landmarks_file)"/>
+    <arg name="observe_scout" value="$(arg observe_scout)"/>
+    <arg name="observe_max_scout_m" value="$(arg observe_max_scout_m)"/>
+    <arg name="observe_scout_n_trips" value="$(arg observe_scout_n_trips)"/>
+    <arg name="observe_scout_margin_m" value="$(arg observe_scout_margin_m)"/>
+    <arg name="observe_scout_min_idle_s" value="$(arg observe_scout_min_idle_s)"/>
+    <arg name="observe_scout_cost_model" value="$(arg observe_scout_cost_model)"/>
+    <arg name="observe_scout_round_trip" value="$(arg observe_scout_round_trip)"/>
+    <arg name="observe_scout_fixed_s" value="$(arg observe_scout_fixed_s)"/>
+    <arg name="observe_scout_per_s_away" value="$(arg observe_scout_per_s_away)"/>
   </include>
   <!-- Not exposed by the navigation launch; the nodes' private params are set from here -->
   <param name="observation_planner/cooldown_s" value="$(arg observe_cooldown_s)"/>
   <param name="observation_planner/roadmap_cache_dir" value="$(arg roadmap_cache_dir)"/>
+  <param name="observation_planner/scout_period_s" value="$(arg observe_scout_period_s)"/>
   <param name="navigator_node/observe_detour_timeout_factor" value="$(arg observe_detour_timeout_factor)"/>
 
   <node if="$(arg observe)" name="observation_evaluator" pkg="mattbot_image_detection" type="observation_evaluator.py" output="screen">

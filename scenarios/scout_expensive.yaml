@@ -1,0 +1,20 @@
+# Scout decision (decision only). The same idle robot and cone as scout_present, but every scout carries a
+# fixed opportunity cost of 60 s of driving (24 m at 0.4 m/s), which exceeds the cone's V even at belief 0:
+# the planner must decline. Checks that the cost model's parameters reach the planner.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_expensive observe_scout:=true observe_scout_fixed_s:=60
+name: scout_expensive
+map: current_map
+launch_args: {observe_scout: true, observe_scout_fixed_s: 60.0}   # for sim.launch pass both as args
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true, scout: declined}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159}
+loop: false
+duration: 300
+expect:
+  min_scout_decisions: 1
+  scout_go_decisions: 0
+  scout_go_not_idle: 0
+  false_removals: 0
+  goal_resends: 0

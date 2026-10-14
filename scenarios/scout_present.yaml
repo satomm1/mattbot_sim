@@ -1,0 +1,24 @@
+# Scout decision (decision only: nothing drives a scout yet). cone_9 sits in the passage north of the
+# corridor at x = 25.5 (as in detour_present: no point of the corridor sees it, I_o about 9 m). The ledger
+# learns it from a peer robot at the start (belief 1), and the robot drives one short leg and then sits idle
+# in the corridor (loop: false). Once the belief has decayed enough that V = N (1 - b)/2 I_o beats the
+# out-and-back cost C, the idle robot's observation planner should decide to scout it.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_present observe_scout:=true
+# Offline: rosrun mattbot_sim check_scout_scenario.py $(rospack find mattbot_sim)/scenarios/scout_present.yaml
+name: scout_present
+map: current_map
+launch_args: {observe_scout: true}   # fast sim and run_fleet.py; for sim.launch pass observe_scout:=true
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true, scout: expected}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159}
+loop: false
+duration: 300
+expect:
+  min_scout_decisions: 1
+  min_scout_go_by_object.cone_9: 1
+  scout_go_not_idle: 0
+  detours_started: 0
+  false_removals: 0
+  goal_resends: 0

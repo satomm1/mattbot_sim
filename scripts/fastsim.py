@@ -30,6 +30,7 @@ COMPARE_FIELDS = [
     "observation_stops_by_kind.OPPORTUNISTIC.ENDED", "observation_stops_by_kind.DETOUR.ENDED",
     "observation_outcomes.PRESENT", "observation_outcomes.ABSENT", "observation_outcomes.INCONCLUSIVE",
     "removal_latency_s.mean", "detours_started", "detours_abandoned", "goal_resends",
+    "scout_decisions", "scout_go_decisions", "scout_go_not_idle",
 ]
 
 

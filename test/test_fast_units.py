@@ -1,6 +1,7 @@
 """Unit tests for the fast simulator's own parts (mattbot_sim/fast); no ROS needed."""
 
 import math
+import os
 
 import numpy as np
 import pytest
@@ -121,3 +122,25 @@ def test_gif_and_png(tmp_path):
     viz.render_gif(sim, sim.frames, gif)
     viz.render_png(sim, sim.frames, png)
     assert Image.open(gif).n_frames == 12 and os.path.getsize(png) > 1000
+
+
+# ---------- Scout decisions ----------
+
+
+def test_scout_params_and_idle_gate():
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    p = FastParams().update({"observe_scout": "true", "observe_scout_fixed_s": "12", "observe_scout_min_idle_s": 10})
+    assert p.observe_scout is True and p.observe_scout_fixed_s == 12.0 and p.observe_scout_min_idle_s == 10.0
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scenarios", "scout_present.yaml")
+    sim = FastSim(path, seed=0, duration=30.0)
+    sim.run()
+    s = sim.summaries()[next(iter(sim.robots))]
+    # The robot reaches its idle pose after a few seconds: idle decisions only after 10 s of IDLE, no GO
+    # yet (the cone's belief is still about 1 at 30 s)
+    assert 0 < s["scout_decisions"] <= (30.0 - 10.0) / 5.0
+    assert s["scout_go_decisions"] == 0
+    r = next(iter(sim.robots.values()))
+    d = r.planner.evaluate_scout((30.0, 18.95, 3.14159), [], sim.now, True)
+    assert d == {"idle": True, "go": False, "candidates": []}  # no objects: no candidates

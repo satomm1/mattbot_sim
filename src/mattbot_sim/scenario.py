@@ -22,7 +22,8 @@ Optional, for detour tests:
     objects:
       - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4,
          known_from_peer: true,   # put it in the ledger at start, as if peer_id had seen it
-         detour: expected}        # offline check (check_detour_scenario.py): expected | declined
+         detour: expected,        # offline check (check_detour_scenario.py): expected | declined
+         scout: declined}         # offline check (check_scout_scenario.py): expected | declined
     expect:                       # checked by sim_monitor at the end of the run (scoring.check_expectations)
       min_detour_stops: 1         # min_<field> / max_<field> / <field> (==) on summary fields
       false_removals: 0
@@ -60,6 +61,7 @@ from mattbot_sim.world import SimObject
 
 ACTIONS = ("remove", "restore", "move", "add")
 DETOUR_ANNOTATIONS = ("expected", "declined")
+SCOUT_ANNOTATIONS = ("expected", "declined")
 DEFAULT_PEER_ID = 98
 
 
@@ -112,6 +114,7 @@ class Scenario:
     peer_id: int = DEFAULT_PEER_ID
     known_from_peer: List[str] = field(default_factory=list)  # object ids seeded into the ledger at start
     detour: Dict[str, str] = field(default_factory=dict)  # object_id -> "expected" | "declined"
+    scout: Dict[str, str] = field(default_factory=dict)  # object_id -> "expected" | "declined"
     expect: Dict[str, float] = field(default_factory=dict)  # see scoring.check_expectations
     robot_id: Optional[int] = None  # fleet scenarios: the robot this view is for
     robot_ids: List[int] = field(default_factory=list)  # fleet scenarios: every robot, in file order
@@ -192,12 +195,13 @@ def load_scenario(path, robot_id=None):
             raise ValueError("%s: scenario event %r needs 'at'" % (path, e))
     raw = d.get("objects", [])
     known_from_peer = [str(o["id"]) for o in raw if o.get("known_from_peer", False)]
-    detour = {}
+    detour, scout = {}, {}
     for o in raw:
-        if "detour" in o:
-            if o["detour"] not in DETOUR_ANNOTATIONS:
-                raise ValueError("%s: object %s: detour must be one of %s" % (path, o["id"], ", ".join(DETOUR_ANNOTATIONS)))
-            detour[str(o["id"])] = str(o["detour"])
+        for key, allowed, out in (("detour", DETOUR_ANNOTATIONS, detour), ("scout", SCOUT_ANNOTATIONS, scout)):
+            if key in o:
+                if o[key] not in allowed:
+                    raise ValueError("%s: object %s: %s must be one of %s" % (path, o["id"], key, ", ".join(allowed)))
+                out[str(o["id"])] = str(o[key])
     expect = parse_expect(d.get("expect"), path)
     if robot:
         expect.update(parse_expect(robot.get("expect"), path))
@@ -213,6 +217,7 @@ def load_scenario(path, robot_id=None):
         peer_id=int(d.get("peer_id", DEFAULT_PEER_ID)),
         known_from_peer=known_from_peer,
         detour=detour,
+        scout=scout,
         expect=expect,
         robot_id=int(robot["id"]) if robot else None,
         robot_ids=robot_ids,

@@ -49,3 +49,20 @@ def test_counts_agree(pair):
         assert (rl is None) == (fl is None)
         if rl:
             assert fl["mean"] == pytest.approx(rl["mean"], rel=0.25)
+
+
+def test_scout_decisions_agree(pair):
+    """Scout decisions (decision only): the same objects get a GO, the first one at about the same time after
+    the object entered the ledger, and an idle gate that never opens in one never opens in the other. The
+    decision counts are not compared exactly: the planner's timer and the fast sim's tick have different phases."""
+    ros, fast = pair
+    for rs in ros:
+        if "scout_decisions" not in rs:
+            continue  # recorded before scout scoring existed
+        fs = fast[rs.get("robot_id", next(iter(fast)))]
+        go = lambda s: sorted(k for k, v in s["scout_go_by_object"].items() if v)  # noqa: E731
+        assert go(fs) == go(rs)
+        assert (fs["scout_decisions"] == 0) == (rs["scout_decisions"] == 0)
+        assert fs["scout_go_not_idle"] == rs["scout_go_not_idle"] == 0
+        for oid, r in rs["scout_first_go_s_by_object"].items():
+            assert fs["scout_first_go_s_by_object"][oid] == pytest.approx(r, abs=max(10.0, 0.2 * r)), oid

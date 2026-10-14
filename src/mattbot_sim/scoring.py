@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 OUTCOMES = ("PRESENT", "ABSENT", "INCONCLUSIVE")
-KINDS = ("OPPORTUNISTIC", "DETOUR")  # mattbot_dds/ObservationStop kind constants, in order
+KINDS = ("OPPORTUNISTIC", "DETOUR", "SCOUT")  # mattbot_dds/ObservationStop kind constants, in order
 STOP_EVENTS = ("STARTED", "ENDED", "ABORTED")
 
 # Navigator log lines (localize_and_navigate.py _start_detour / _arrive_at_detour_viewpoint / detour resume /
@@ -66,6 +66,12 @@ class RunScorer:
     detour_reasons: List[str] = field(default_factory=list)  # abandon / cancel reasons
     runner: Dict[str, int] = field(default_factory=lambda: {"resend": 0, "give_up": 0})
     blockouts: List[dict] = field(default_factory=list)  # one per correct removal
+    # Scout decisions (observation_planner /observation/scout; decision only, nothing drives a scout yet)
+    scout: Dict[str, int] = field(default_factory=lambda: {"decisions": 0, "go": 0, "go_not_idle": 0})
+    scout_go_by_object: Dict[str, int] = field(default_factory=dict)  # true object id (else ledger id) -> GOs
+    scout_first_go_s: Dict[str, float] = field(default_factory=dict)  # s from ledger entry to the first GO
+    scout_best_net_m: Dict[str, float] = field(default_factory=dict)  # max V - C over idle decisions
+    scout_last: Optional[tuple] = None  # (idle, chosen ids) of the last decision, to log changes only
 
     # ---------- Ground truth ----------
 
@@ -190,6 +196,53 @@ class RunScorer:
             kind + " " if kind else "", object_id, class_name, outcome, reason,
             {True: "present", False: "gone", None: "?", "changed": "removed/added mid-window"}[truth], verdict)
 
+    # ---------- Scout decisions ----------
+
+    def _true_id(self, ledger_id):
+        obj = self.active.get(ledger_id) or self.gone.get(ledger_id)
+        return obj.placement["object_id"] if obj is not None and obj.placement else ledger_id
+
+    def add_scout_decision(self, t, decision):
+        """One scout decision, as a dict (both sims build the same shape):
+
+            {"idle": bool, "go": bool, "candidates": [{"object_ids": [ledger ids], "chosen": bool,
+             "value_m", "cost_m", "net_m", "to_view_m", "opportunity_m", "t_away_s"}, ...]}
+
+        Object ids are ledger ids; they are scored as the true objects they matched. Returns a log line
+        when the decision changed (idle, or the chosen objects), else None.
+        """
+        idle, go = bool(decision.get("idle")), bool(decision.get("go"))
+        cands = decision.get("candidates", [])
+        chosen = sorted({self._true_id(oid) for c in cands if c.get("chosen") for oid in c["object_ids"]})
+        if not idle:
+            self.scout["go_not_idle"] += int(go)
+        else:
+            self.scout["decisions"] += 1
+            self.scout["go"] += int(go)
+            for c in cands:
+                for oid in c["object_ids"]:
+                    tid = self._true_id(oid)
+                    self.scout_best_net_m[tid] = max(self.scout_best_net_m.get(tid, -math.inf), float(c["net_m"]))
+                    if not c.get("chosen"):
+                        continue
+                    self.scout_go_by_object[tid] = self.scout_go_by_object.get(tid, 0) + 1
+                    obj = self.active.get(oid) or self.gone.get(oid)
+                    if tid not in self.scout_first_go_s and obj is not None:
+                        self.scout_first_go_s[tid] = t - obj.first_seen
+        key = (idle, tuple(chosen))
+        if key == self.scout_last:
+            return None
+        self.scout_last = key
+        if not idle:
+            return "scout: not idle" + (" (but GO: %s)" % "+".join(chosen) if go else "")
+        best = max(cands, key=lambda c: c["net_m"]) if cands else None
+        if best is None:
+            return "scout: idle, no candidates"
+        return "scout: idle, %s %s: %.1f m away, V=%.1f m, C=%.1f m (opp=%.1f m, away=%.0f s)" % (
+            "GO" if best.get("chosen") else "skip", "+".join(self._true_id(o) for o in best["object_ids"]),
+            best.get("to_view_m", 0.0), best["value_m"], best["cost_m"], best.get("opportunity_m", 0.0),
+            best.get("t_away_s", 0.0))
+
     # ---------- Navigation blockouts ----------
 
     def update_blockouts(self, now, is_blocked):
@@ -206,6 +259,7 @@ class RunScorer:
 
     def summary(self, now):
         removed_truths = [p for p in self.placements if p["t_end"] is not None]
+        true_ids = sorted({p["object_id"] for p in self.placements})
         stale = []
         for obj in self.active.values():
             if not self.present_at(obj.class_name, obj.x, obj.y, now):
@@ -242,6 +296,12 @@ class RunScorer:
             "wrong_observation_outcomes": sum(1 for r in self.results if r["verdict"] == "WRONG"),
             "blockouts_still_present": [b["object_id"] for b in self.blockouts if b["cleared_after_s"] is None],
             "blockout_clear_after_s": [b["cleared_after_s"] for b in self.blockouts if b["cleared_after_s"] is not None],
+            "scout_decisions": self.scout["decisions"],
+            "scout_go_decisions": self.scout["go"],
+            "scout_go_not_idle": self.scout["go_not_idle"],
+            "scout_go_by_object": dict({oid: 0 for oid in true_ids}, **self.scout_go_by_object),
+            "scout_first_go_s_by_object": {k: round(v, 1) for k, v in self.scout_first_go_s.items()},
+            "scout_best_net_m_by_object": {k: round(v, 2) for k, v in self.scout_best_net_m.items()},
         }
 
 

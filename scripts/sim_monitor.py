@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 import rospy
-from mattbot_dds.msg import ObjectBeliefArray, ObservationEvent, ObservationResult
+from mattbot_dds.msg import ObjectBeliefArray, ObservationEvent, ObservationResult, ScoutDecision
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Twist
 from rosgraph_msgs.msg import Log
@@ -46,6 +46,7 @@ class SimMonitor:
         rospy.Subscriber("/observation/results", ObservationResult, self.result_callback, queue_size=50)
         rospy.Subscriber("/object_map", OccupancyGrid, self.object_map_callback, queue_size=1)
         rospy.Subscriber("/sim/runner_event", String, self.runner_callback, queue_size=10)
+        rospy.Subscriber("/observation/scout", ScoutDecision, self.scout_callback, queue_size=10)
         self.navigator_name = rospy.get_param("~navigator_node", "/navigator_node")
         rospy.Subscriber("/rosout_agg", Log, self.rosout_callback, queue_size=200)
         # Loop rates in ROS time: the navigator publishes nav_vel every 10 Hz cycle, sim_world camera_info every
@@ -74,6 +75,17 @@ class SimMonitor:
         name = EVENT_NAMES.get(msg.event, str(msg.event))
         line = self.scorer.add_stop_event(name, kind_name(msg.kind), msg.object_id, rospy.get_time(),
                                           robot_xy=(msg.x, msg.y), distance=msg.distance)
+        if line:
+            self.note(line)
+
+    def scout_callback(self, msg):
+        if msg.header.stamp.to_sec() < self.t_start:
+            return  # latched decision from before this run
+        decision = {"idle": msg.idle, "go": msg.go, "candidates": [
+            {"object_ids": list(c.object_ids), "chosen": c.chosen, "value_m": c.value_m, "cost_m": c.cost_m,
+             "net_m": c.net_m, "to_view_m": c.to_view_m, "opportunity_m": c.opportunity_m, "t_away_s": c.t_away_s}
+            for c in msg.candidates]}
+        line = self.scorer.add_scout_decision(rospy.get_time(), decision)
         if line:
             self.note(line)
 

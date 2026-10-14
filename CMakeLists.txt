@@ -13,6 +13,7 @@ catkin_install_python(PROGRAMS
   scripts/scenario_runner.py
   scripts/sim_monitor.py
   scripts/check_detour_scenario.py
+  scripts/check_scout_scenario.py
   scripts/run_fleet.py
   scripts/fastsim.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from mattbot_sim.scenario import load_scenario, parse_event
-from mattbot_sim.scoring import RateTracker, RunScorer, check_expectations, kind_name
+from mattbot_sim.scoring import RateTracker, RunScorer, check_expectations, kind_name, summary_value
 
 SCENARIOS = os.path.join(os.path.dirname(__file__), "..", "scenarios")
 
@@ -207,3 +207,49 @@ def test_fleet_scenario_validation(tmp_path):
     path.write_text("map: m\nrobots:\n  - {id: 1, start: {x: 0, y: 0}}\n  - {id: 1, start: {x: 1, y: 0}}\n")
     with pytest.raises(ValueError):  # duplicate ids
         load_scenario(str(path))
+
+
+# ---------- Scout decisions ----------
+
+
+def _scorer_with_cone():
+    s = RunScorer()
+    s.set_ground_truth([{"object_id": "cone_9", "class_name": "cone", "x": 1.0, "y": 1.0, "t_start": 0.0,
+                         "t_end": None}])
+    s.update_ledger(10.0, [("98-1-1", "cone", 1.0, 1.0)])
+    return s
+
+
+def _decision(idle, chosen, net=2.0):
+    return {"idle": idle, "go": chosen, "candidates": [
+        {"object_ids": ["98-1-1"], "chosen": chosen, "value_m": 10.0, "cost_m": 10.0 - net, "net_m": net,
+         "to_view_m": 3.0, "opportunity_m": 0.0, "t_away_s": 20.0}]}
+
+
+def test_scout_kind_name():
+    assert kind_name(2) == "SCOUT"
+
+
+def test_scout_decisions_are_counted_per_true_object():
+    s = _scorer_with_cone()
+    assert s.add_scout_decision(20.0, _decision(True, False, net=-1.0)).startswith("scout: idle, skip cone_9")
+    assert s.add_scout_decision(25.0, _decision(True, False, net=-1.0)) is None  # unchanged: no log line
+    assert "GO cone_9" in s.add_scout_decision(30.0, _decision(True, True))
+    s.add_scout_decision(35.0, _decision(True, True, net=3.0))
+    sm = s.summary(40.0)
+    assert sm["scout_decisions"] == 4 and sm["scout_go_decisions"] == 2 and sm["scout_go_not_idle"] == 0
+    assert sm["scout_go_by_object"] == {"cone_9": 2}
+    assert sm["scout_first_go_s_by_object"] == {"cone_9": 20.0}  # 30 s, ledger entry at 10 s
+    assert sm["scout_best_net_m_by_object"] == {"cone_9": 3.0}
+    assert summary_value(sm, "scout_go_by_object.cone_9") == 2
+
+
+def test_scout_not_idle_decisions_and_preseeded_zeros():
+    s = _scorer_with_cone()
+    assert s.add_scout_decision(20.0, {"idle": False, "go": False, "candidates": []}) == "scout: not idle"
+    s.add_scout_decision(25.0, _decision(False, True))  # a GO while not idle: counted as a guard failure
+    sm = s.summary(30.0)
+    assert sm["scout_decisions"] == 0 and sm["scout_go_not_idle"] == 1
+    assert sm["scout_go_by_object"] == {"cone_9": 0}
+    checks = check_expectations(sm, {"scout_go_by_object.cone_9": 0, "scout_go_not_idle": 0})
+    assert [c["ok"] for c in checks] == [True, False]
