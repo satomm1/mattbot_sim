@@ -1,0 +1,29 @@
+# Endpoint check (KNOWN_ISSUES 2.1). cone_7 sits around the corner south-east of the patrol's east end
+# (46, 18.95): it can be seen from the park pose there and from no point of either leg that an on-path stop
+# may use (the last 0.8 m before a goal and the first 0.5 m after a start are never used). It is not hidden
+# from the path, so before the endpoint checks neither an opportunistic stop nor a detour checked it, and its
+# removal at t = 120 s was never noticed (stale_ledger_objects). Expected: the robot looks at it from the
+# east end, after parking there (AT_GOAL) or before leaving it (AT_START, when the cooldown had not ended
+# by the time the leg to the east end was planned), reports ABSENT once it is gone, and the ledger removes it.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=endpoint_removed
+name: endpoint_removed
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_7, class: cone, x: 47.25, y: 16.45, width: 0.3, known_from_peer: true}
+waypoints:
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 600
+events:
+  - {at: 120, remove: cone_7}   # well before the next arrival there, so latency is not dominated by small lap-time differences
+expect:
+  min_observation_stops_by_kind.AT_GOAL.ENDED: 1
+  min_observation_outcomes.ABSENT: 1
+  observation_stops_by_kind.OPPORTUNISTIC.STARTED: 0
+  correct_removals: 1
+  false_removals: 0
+  stale_ledger_objects: 0
+  wrong_observation_outcomes: 0
+  goal_resends: 0

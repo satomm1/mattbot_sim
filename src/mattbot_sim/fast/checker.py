@@ -18,7 +18,7 @@ import numpy as np
 
 from mattbot_sim.fast import imports  # noqa: F401
 from navigation_utils.observation_policy import (
-    DETOUR, SCOUT_COST_MODELS, Candidate, DetourValueParams, ScoutValueParams, ThresholdPolicy,
+    DETOUR, SCOUT_COST_MODELS, Candidate, DetourValueParams, ScoutValueParams, ThresholdPolicy, covered_ids,
 )
 from navigation_utils.viewpoints import blocking_mask, compute_viewshed, nearby_blockers
 from observation_eval.evidence import (
@@ -43,6 +43,12 @@ class StopRequest:
     object_ids: List[str]
     targets: List[tuple]
     cost_s: float
+    to_view_s: float = 0.0
+
+
+def candidates_of(beliefs):
+    """observation_planner.beliefs_callback: /object_beliefs -> Candidates."""
+    return [Candidate(b.object_id, b.class_name, b.x, b.y, b.belief, b.width, b.last_stamp) for b in beliefs]
 
 
 class ObservationCore:
@@ -121,6 +127,8 @@ class CheckPlanner:
             check_below_belief=p.observe_check_below_belief, cooldown_s=p.observe_cooldown_s, max_cost_s=0.0,
             r_pref=2.0, skip_start_m=0.5, skip_goal_m=0.8, merge_m=0.5, max_turn=math.pi / 2, turn_rate=1.0,
             dwell_s=p.observe_dwell_s, cruise_speed=p.cruising_velocity,
+            hold_s=p.belief_hold_s, decay_s=p.belief_decay_s,  # /object_beliefs hold_s / decay_s
+            intent_margin_s=p.observe_intent_margin_s,
         )
         if core.tracker is not None:
             self.policy.importance_fn = core.importance
@@ -141,56 +149,76 @@ class CheckPlanner:
     def record_check(self, object_id, t):
         self.policy.record_check(object_id, t)
 
-    def select(self, path_xy, beliefs, now, exclude=()):
-        """observation_planner.select_srv: path (strided trajectory points) -> [StopRequest]."""
+    def select(self, path_xy, beliefs, now, exclude=(), start_pose=None, goal_theta=None, times=None,
+               peer_intents=None, robot_id=None):
+        """observation_planner.select_srv: path (strided trajectory points, ending at the park pose) -> [StopRequest].
+        start_pose (x, y, theta): the robot may look from there first (allow_start_check), else None.
+        times: trajectory time (s from now) per path point. peer_intents / robot_id: the other robots' live
+        intents and this robot (observation_planner.intents_callback)."""
         path_xy = np.asarray(path_xy, dtype=float)
         if len(path_xy) < 2:
             return []
+        if times is not None and len(times) != len(path_xy):
+            times = None
         core, pol = self.core, self.policy
-        cands = [Candidate(b.object_id, b.class_name, b.x, b.y, b.belief, b.width) for b in beliefs]
+        pol.robot_id, pol.peer_intents = robot_id, list(peer_intents or [])
+        cands = candidates_of(beliefs)
         exclude = set(exclude)
-        eligible = pol.eligible_candidates(cands, now, exclude)
+        t_end = now + (times[-1] if times is not None else 0.0)
+        eligible = [c for c in cands if pol.t_due(c, now, exclude) <= t_end + 1e-9]
         detour_eligible = [c for c in cands if pol.detour_eligible(c, now, exclude)] if core.tracker else []
         core.ensure_viewsheds({c.object_id: c for c in eligible + detour_eligible}.values(), cands)
         views = {oid: vs for oid, (vs, _sig) in core.viewsheds.items()}
-        options = pol.opportunistic_options(path_xy, cands, views, now, exclude)
+        options = pol.opportunistic_options(path_xy, cands, views, now, exclude, start_pose, goal_theta, times)
+        covered = covered_ids(options)
+        start_xy = start_pose[:2] if start_pose is not None else None
         self.detour_log = []
         if core.tracker is not None and core.detour_planner is not None:
             from navigation_utils.detour import DetourParams
 
-            dcands = pol.detour_candidates(path_xy, cands, views, now, exclude)
+            dcands = pol.detour_candidates(path_xy, cands, views, now, exclude, covered=covered, start_xy=start_xy,
+                                           times=times)
+            t_bound = pol.detour_bound_time(now, times)
             targets = {}
             for c in dcands:
-                d_star = pol.max_detour_m(c)
+                d_star = pol.max_detour_m(c, t_bound)
                 if d_star > 0:
                     targets[c.object_id] = (c.x, c.y, core.detour_planner.viewpoint_nodes(views[c.object_id]), d_star)
             detours = core.detour_planner.compute(
                 path_xy, targets, DetourParams(max_detour_m=core.params.observe_max_detour_m, r_max=core.params.r_max))
-            chosen, evaluations = pol.detour_options(path_xy, cands, views, now, exclude, detours)
+            chosen, evaluations = pol.detour_options(path_xy, cands, views, now, exclude, detours,
+                                                     covered=covered, start_xy=start_xy, times=times)
             options += chosen
             self.detour_log = [(ev.object_ids, ev.detour_m, ev.value_m, ev.cost_m, ev.chosen, ev.blocked)
                                for ev in evaluations]
         return [StopRequest(o.kind, o.resume, o.path_index, o.stop.x, o.stop.y, o.stop.heading,
-                            [c.object_id for c in o.candidates], [(c.x, c.y) for c in o.candidates], o.cost_s)
+                            [c.object_id for c in o.candidates], [(c.x, c.y) for c in o.candidates], o.cost_s,
+                            o.to_view_s)
                 for o in options]
 
-    def evaluate_scout(self, pose, beliefs, now, idle):
+    def revalidate(self, kind, object_ids, beliefs, now, planned_eta=None, cost_s=0.0):
+        """observation_planner.revalidate_srv -> [(due, reason)] per object."""
+        cands = {c.object_id: c for c in candidates_of(beliefs)}
+        return self.policy.revalidate(kind, list(object_ids), cands, now, planned_eta, cost_s)
+
+    def evaluate_scout(self, pose, beliefs, now, idle, peer_intents=None, robot_id=None):
         """observation_planner.evaluate_scout from pose (x, y, theta) -> decision dict (scoring.add_scout_decision).
         With idle False nothing is chosen (as the planner's periodic decision)."""
         core, pol = self.core, self.policy
+        pol.robot_id, pol.peer_intents = robot_id, list(peer_intents or [])
         decision = {"idle": bool(idle), "go": False, "candidates": []}
         if core.scout_planner is None:
             return decision
         from navigation_utils.scout import ScoutParams
 
         p = core.params
-        cands = [Candidate(b.object_id, b.class_name, b.x, b.y, b.belief, b.width) for b in beliefs]
+        cands = candidates_of(beliefs)
         eligible = [c for c in cands if pol.scout_eligible(c, now)]
         core.ensure_viewsheds(eligible, cands)
         views = {oid: vs for oid, (vs, _sig) in core.viewsheds.items()}
         targets = {}
         for c in eligible:
-            limit = pol.max_scout_m(c)
+            limit = pol.max_scout_m(c, now)
             if limit > 0:
                 targets[c.object_id] = (c.x, c.y, core.detour_planner.viewpoint_nodes(views[c.object_id]), limit)
         results = core.scout_planner.compute((pose[0], pose[1]), targets,
@@ -203,7 +231,7 @@ class CheckPlanner:
                 for oid in ev.object_ids:
                     self.scout_chosen[oid] = ev.source
             decision["candidates"].append({
-                "object_ids": list(ev.object_ids), "chosen": chosen, "value_m": ev.value_m, "cost_m": ev.cost_m,
+                "object_ids": list(ev.object_ids), "chosen": chosen, "blocked": ev.blocked, "value_m": ev.value_m, "cost_m": ev.cost_m,
                 "net_m": ev.net_m, "to_view_m": ev.source.to_view_m,
                 "opportunity_m": ev.breakdown.get("fixed_m", 0.0) + ev.breakdown.get("away_m", 0.0),
                 "t_away_s": ev.breakdown.get("t_away_s", 0.0),

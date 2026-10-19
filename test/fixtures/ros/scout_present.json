@@ -1,154 +1,179 @@
 {
  "scenario": "scout_present",
- "source": "ROS sim (sim.launch observe_scout:=true speed:=2), 2026-10-14",
+ "source": "ROS sim (sim.launch observe_scout:=true speed:=2), 2026-10-19",
  "summaries": [
   {
+   "blockout_clear_after_s": [],
+   "blockouts_still_present": [],
+   "correct_removals": 0,
+   "detour_abandon_reasons": [],
+   "detour_stops": 0,
+   "detours_abandoned": 0,
+   "detours_cancelled": 0,
+   "detours_done": 0,
+   "detours_dropped": 0,
+   "detours_reached": 0,
+   "detours_started": 0,
+   "detours_yielded": 0,
+   "expectations": [
+    {
+     "actual": 56,
+     "expected": 1.0,
+     "key": "min_scout_decisions",
+     "ok": true,
+     "op": ">="
+    },
+    {
+     "actual": 54,
+     "expected": 1.0,
+     "key": "min_scout_go_by_object.cone_9",
+     "ok": true,
+     "op": ">="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "scout_go_not_idle",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "detours_started",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "false_removals",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "goal_resends",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 1,
+     "expected": 1,
+     "key": "loop_rates_ok",
+     "ok": true,
+     "op": "=="
+    }
+   ],
+   "expectations_passed": true,
+   "false_removals": 0,
+   "goal_resends": 0,
+   "goals_given_up": 0,
+   "ledger_objects_added": 1,
+   "loop_rates": {
+    "detector": {
+     "mean_hz": 4.98,
+     "min_window_hz": 4.5,
+     "nominal_hz": 5.0
+    },
+    "navigator": {
+     "mean_hz": 10.0,
+     "min_window_hz": 10.0,
+     "nominal_hz": 10.0
+    }
+   },
+   "loop_rates_ok": true,
+   "observation_outcomes": {
+    "ABSENT": 0,
+    "INCONCLUSIVE": 0,
+    "PRESENT": 0
+   },
+   "observation_outcomes_by_kind": {
+    "AT_GOAL": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "AT_START": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "DETOUR": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "OPPORTUNISTIC": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "SCOUT": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    }
+   },
+   "observation_stops": {
+    "ABORTED": 0,
+    "ENDED": 0,
+    "STARTED": 0
+   },
+   "observation_stops_by_kind": {
+    "AT_GOAL": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "AT_START": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "DETOUR": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "OPPORTUNISTIC": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "SCOUT": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    }
+   },
+   "removal_latency_s": null,
+   "run_s": 327.5,
+   "run_wall_s": 162.7,
+   "scenario": "scout_present",
+   "scout_best_net_m_by_object": {
+    "cone_9": 8.51
+   },
+   "scout_decisions": 56,
+   "scout_first_go_s_by_object": {
+    "cone_9": 32.3
+   },
+   "scout_go_by_object": {
+    "cone_9": 54
+   },
+   "scout_go_decisions": 54,
+   "scout_go_not_idle": 0,
+   "scout_yielded": 0,
+   "spurious_ledger_objects": 0,
+   "stale_ledger_objects": [],
+   "stop_skip_reasons": [],
+   "stops_skipped": 0,
    "true_objects": [
     "cone_9"
    ],
    "true_removals": 0,
-   "ledger_objects_added": 1,
-   "spurious_ledger_objects": 0,
-   "correct_removals": 0,
-   "false_removals": 0,
-   "removal_latency_s": null,
-   "stale_ledger_objects": [],
-   "observation_stops": {
-    "STARTED": 0,
-    "ENDED": 0,
-    "ABORTED": 0
-   },
-   "observation_outcomes": {
-    "PRESENT": 0,
-    "ABSENT": 0,
-    "INCONCLUSIVE": 0
-   },
-   "observation_stops_by_kind": {
-    "OPPORTUNISTIC": {
-     "STARTED": 0,
-     "ENDED": 0,
-     "ABORTED": 0
-    },
-    "DETOUR": {
-     "STARTED": 0,
-     "ENDED": 0,
-     "ABORTED": 0
-    },
-    "SCOUT": {
-     "STARTED": 0,
-     "ENDED": 0,
-     "ABORTED": 0
-    }
-   },
-   "observation_outcomes_by_kind": {
-    "OPPORTUNISTIC": {
-     "PRESENT": 0,
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0
-    },
-    "DETOUR": {
-     "PRESENT": 0,
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0
-    },
-    "SCOUT": {
-     "PRESENT": 0,
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0
-    }
-   },
-   "detour_stops": 0,
-   "detours_started": 0,
-   "detours_reached": 0,
-   "detours_done": 0,
-   "detours_abandoned": 0,
-   "detours_cancelled": 0,
-   "detour_abandon_reasons": [],
-   "goal_resends": 0,
-   "goals_given_up": 0,
-   "wrong_observation_outcomes": 0,
-   "blockouts_still_present": [],
-   "blockout_clear_after_s": [],
-   "scout_decisions": 56,
-   "scout_go_decisions": 52,
-   "scout_go_not_idle": 0,
-   "scout_go_by_object": {
-    "cone_9": 52
-   },
-   "scout_first_go_s_by_object": {
-    "cone_9": 45.6
-   },
-   "scout_best_net_m_by_object": {
-    "cone_9": 8.51
-   },
-   "scenario": "scout_present",
-   "run_s": 332.5,
-   "run_wall_s": 163.9,
-   "loop_rates": {
-    "navigator": {
-     "nominal_hz": 10.0,
-     "mean_hz": 9.99,
-     "min_window_hz": 9.6
-    },
-    "detector": {
-     "nominal_hz": 5.0,
-     "mean_hz": 5.0,
-     "min_window_hz": 4.9
-    }
-   },
-   "loop_rates_ok": true,
-   "expectations": [
-    {
-     "key": "min_scout_decisions",
-     "op": ">=",
-     "expected": 1.0,
-     "actual": 56,
-     "ok": true
-    },
-    {
-     "key": "min_scout_go_by_object.cone_9",
-     "op": ">=",
-     "expected": 1.0,
-     "actual": 52,
-     "ok": true
-    },
-    {
-     "key": "scout_go_not_idle",
-     "op": "==",
-     "expected": 0.0,
-     "actual": 0,
-     "ok": true
-    },
-    {
-     "key": "detours_started",
-     "op": "==",
-     "expected": 0.0,
-     "actual": 0,
-     "ok": true
-    },
-    {
-     "key": "false_removals",
-     "op": "==",
-     "expected": 0.0,
-     "actual": 0,
-     "ok": true
-    },
-    {
-     "key": "goal_resends",
-     "op": "==",
-     "expected": 0.0,
-     "actual": 0,
-     "ok": true
-    },
-    {
-     "key": "loop_rates_ok",
-     "op": "==",
-     "expected": 1,
-     "actual": 1,
-     "ok": true
-    }
-   ],
-   "expectations_passed": true
+   "wrong_observation_outcomes": 0
   }
  ]
 }

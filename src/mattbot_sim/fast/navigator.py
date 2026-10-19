@@ -18,10 +18,12 @@ import numpy as np
 from mattbot_sim.fast import imports  # noqa: F401
 from mattbot_sim.kinematics import Pose2D, step, wrap_angle
 from navigation_utils import plan_start_heading
-from navigation_utils.observation_policy import DETOUR, OPPORTUNISTIC, REPLAN
+from dds_utils.intents import Intent
+from navigation_utils.observation_policy import AT_GOAL, AT_START, DETOUR, OPPORTUNISTIC, REPLAN, check_etas, yields_to
 from navigation_utils.trackers import HeadingController, PoseController
 
 OBSERVE_MODES = ("OBSERVE_TURN", "OBSERVE_DWELL")
+ENDPOINT_KINDS = (AT_START, AT_GOAL)
 NAV = "[Navigator] "
 
 
@@ -58,6 +60,12 @@ class FastNavigator:
         self.observe_goal = None
         self.observed_this_goal = set()
         self.detour_skipped = set()
+        self.start_stop = None  # AT_START / AT_GOAL entries of the current plan
+        self.goal_stop = None
+        self.yielded = {}  # object_id -> robot whose earlier check a detour of ours gave way to (this goal)
+        self.progress = 0.0  # plan time reached on the current trajectory (frozen outside TRACK)
+        self.intents_dirty = True
+        self.intents_sent_at = -1e9
         self.detour = None
         self.observe_stop = None
         self.observe_queue = []
@@ -89,6 +97,7 @@ class FastNavigator:
             self.t_plan = 0.0
             self.blocked_s = 0.0
         self.mode = new_mode
+        self.intents_dirty = True
 
     def active_goal(self):
         if self.detour is not None:
@@ -125,6 +134,7 @@ class FastNavigator:
     def stop(self):
         """/stop."""
         self.cancel_detour("stop")
+        self.start_stop = self.goal_stop = None
         self.switch_mode("IDLE")
         self.goal = None
 
@@ -136,6 +146,7 @@ class FastNavigator:
         if g is None:
             return
         self.counters["replans"] += 1
+        self.start_stop = self.goal_stop = None
         planner = self.sim.planner
         grid = planner.grid(self.robot.mapper.object_layer(), (self.robot.id, self.robot.mapper.version))
         start = planner.start_cell(grid, self.pose.x, self.pose.y)
@@ -162,12 +173,18 @@ class FastNavigator:
                 self.enter_park_pose()
             return
         self.plan = (plan.times, plan.traj)
+        self.progress = 0.0
         self.duration = float(plan.times[-1])
         self.park_goal = (float(plan.traj[-1, 0]), float(plan.traj[-1, 1]), float(plan.traj[-1, 2]))
         self.th_init = plan.th_init
         self.heading.load_goal(self.th_init)
         self.valid_version = self.robot.mapper.version
         self.request_observation_stops()
+        if self.start_stop is not None:  # look from here before leaving, then ALIGN (load_remaining_plan(0))
+            entry, self.start_stop = self.start_stop, None
+            self.aligned_since = None
+            if self.start_observation_stop(entry):
+                return
         self.switch_mode("ALIGN")
         if self.aligned():
             self.aligned_since = self.sim.now
@@ -188,21 +205,41 @@ class FastNavigator:
         self.stops = []
         if not self.p.observe or self.detour is not None:
             return
-        if self.goal != self.observe_goal:
+        first_plan = self.goal != self.observe_goal
+        if first_plan:
             self.observe_goal = self.goal
             self.observed_this_goal = set()
             self.detour_skipped = set()
+            self.yielded = {}
         times, traj = self.plan
         stride = self.p.observe_path_stride
-        path_xy = traj[::stride, :2]
+        ks = list(range(0, len(traj), stride))
+        if ks[-1] != len(traj) - 1:
+            ks.append(len(traj) - 1)  # end at the park pose
+        path_xy = traj[ks, :2]
+        req_times = [float(times[k]) for k in ks]
+        start_pose = (self.pose.x, self.pose.y, self.pose.theta) if first_plan else None
         stops = self.robot.planner.select(path_xy, self.sim.beliefs(), self.sim.now,
-                                          exclude=self.observed_this_goal | self.detour_skipped)
+                                          exclude=self.observed_this_goal | self.detour_skipped | self.live_yielded(),
+                                          start_pose=start_pose, goal_theta=self.goal[2], times=req_times,
+                                          peer_intents=self.sim.peer_intents(self.robot), robot_id=self.robot.id)
         have_detour = False
+        endpoints = []
         for s in stops:
             if s.path_index < 0:
                 continue
             idx = min(s.path_index * stride, len(traj) - 1)
             entry = {"idx": idx, "t": float(times[idx]), "stop": s, "detour": False}
+            if s.kind in ENDPOINT_KINDS:
+                entry["goal"] = self.goal
+                if s.kind == AT_START:
+                    entry["idx"], entry["t"] = 0, 0.0
+                    self.start_stop = entry
+                else:
+                    entry["idx"], entry["t"] = len(traj) - 1, float(times[-1])
+                    self.goal_stop = entry
+                endpoints.append(entry)
+                continue
             if s.kind == DETOUR:
                 if not self.p.observe_detour or have_detour:
                     continue
@@ -213,9 +250,14 @@ class FastNavigator:
                 continue
             self.stops.append(entry)
         self.stops.sort(key=lambda e: e["idx"])
-        if self.stops:
+        planned = sorted(self.stops + endpoints, key=lambda e: e["idx"])
+        for entry, eta in zip(planned, check_etas([e["stop"] for e in planned], req_times)):
+            entry["eta"] = self.sim.now + eta
+        self.intents_dirty = True
+        if planned:
+            prefix = {DETOUR: "detour:", AT_START: "at_start:", AT_GOAL: "at_goal:"}
             self.log("Observation stops planned: %s", ", ".join(
-                ("detour:" if e["detour"] else "") + "+".join(e["stop"].object_ids) for e in self.stops))
+                prefix.get(e["stop"].kind, "") + "+".join(e["stop"].object_ids) for e in planned))
 
     def observation_due(self):
         if not self.stops:
@@ -232,10 +274,31 @@ class FastNavigator:
         return False
 
     def start_observation_stop(self, entry=None):
-        self.observe_stop = entry if entry is not None else self.stops.pop(0)
-        s = self.observe_stop["stop"]
-        self.observe_queue = list(zip(s.object_ids, s.targets))
+        """False if every target was already checked for this goal (nothing started)."""
+        entry = entry if entry is not None else self.stops.pop(0)
+        s = entry["stop"]
+        queue = [(oid, t) for oid, t in zip(s.object_ids, s.targets) if oid not in self.observed_this_goal]
+        if queue:
+            due = self.revalidate(entry, [q[0] for q in queue], self.p.observe_dwell_s * len(queue))
+            queue = [q for q in queue if q[0] in due]
+        if not queue:
+            return False
+        self.observe_stop = entry
+        self.observe_queue = queue
         self.next_observe_target()
+        return True
+
+    def start_goal_check(self):
+        """At the park pose: look at this plan's AT_GOAL objects before the final heading turn."""
+        entry, self.goal_stop = self.goal_stop, None
+        if entry is None or entry["goal"] != self.goal:
+            return False
+        return self.start_observation_stop(entry)
+
+    def finish_park_pose(self):
+        self.heading.load_goal(self.goal[2] if self.goal else self.park_goal[2])
+        self.phase_start = self.sim.now
+        self.mode = "PARK_HEADING"
 
     def next_observe_target(self):
         self.observe_target = self.observe_queue.pop(0)
@@ -277,7 +340,7 @@ class FastNavigator:
         oid = self.observe_target[0]
         if done:
             self.observed_this_goal.add(oid)
-        elif self.observe_stop and self.observe_stop["detour"]:
+        elif self.observe_stop and (self.observe_stop["detour"] or self.observe_stop["stop"].kind in ENDPOINT_KINDS):
             self.detour_skipped.add(oid)
         if self.observe_queue:
             self.next_observe_target()
@@ -285,7 +348,11 @@ class FastNavigator:
         entry, self.observe_stop, self.observe_target = self.observe_stop, None, None
         self.resuming = True
         try:
-            if entry["stop"].resume == REPLAN:
+            if entry["stop"].kind == AT_START:
+                self.load_remaining_plan(0)
+            elif entry["stop"].kind == AT_GOAL:
+                self.finish_park_pose()
+            elif entry["stop"].resume == REPLAN:
                 self.detour = None
                 self.log("Detour done; replanning to the goal")
                 self.switch_mode("IDLE")
@@ -308,6 +375,7 @@ class FastNavigator:
             self.enter_park_pose()
             return
         self.plan = (t_new, rest)
+        self.progress = 0.0
         self.duration = float(t_new[-1])
         for e in self.stops:
             e["idx"] -= idx
@@ -315,25 +383,53 @@ class FastNavigator:
         self.th_init = float(plan_start_heading(None, rest, v_min=0.05))
         self.heading.load_goal(self.th_init)
         self.switch_mode("ALIGN")
-        if self.aligned():
-            self.aligned_since = self.sim.now
+        self.aligned_since = self.sim.now if self.aligned() else None
 
     # ---------- Detours ----------
 
+    def revalidate(self, entry, object_ids, cost_s):
+        """localize_and_navigate._revalidate: ids still due a check now."""
+        s = entry["stop"]
+        results = self.robot.planner.revalidate(s.kind, object_ids, self.sim.beliefs(), self.sim.now,
+                                                entry.get("eta"), cost_s)
+        due = set()
+        for oid, (ok, reason) in zip(object_ids, results):
+            if ok:
+                due.add(oid)
+            else:
+                self.log("Skipping check of %s (%s)", oid, reason)
+        return due
+
     def start_detour(self):
+        entry = self.stops[0]
+        winners = self.detour_winners(entry["stop"], self.entry_eta(entry))
+        if winners:
+            self.stops.pop(0)
+            self.record_yield(entry["stop"], winners)
+            return
+        if not self.revalidate(entry, list(entry["stop"].object_ids), entry["stop"].cost_s):
+            self.stops.pop(0)
+            self.log("Detour to check %s dropped: no longer due", "+".join(entry["stop"].object_ids))
+            return
         entry = self.stops.pop(0)
+        displaced = self.stops + ([self.goal_stop] if self.goal_stop is not None else [])
         self.stops = []
         s = entry["stop"]
         tx, ty = s.targets[0]
         self.detour = {"entry": entry, "stop": s, "goal": self.goal, "heading": math.atan2(ty - s.y, tx - s.x),
-                       "deadline": self.sim.now + self.p.observe_detour_timeout_factor * float(s.cost_s) + 20.0}
+                       "deadline": self.sim.now + self.p.observe_detour_timeout_factor * float(s.cost_s) + 20.0,
+                       "displaced": displaced}
         self.log("Detour to (%.2f, %.2f) to check %s (est. %.0f s)", s.x, s.y, "+".join(s.object_ids), s.cost_s)
         self.switch_mode("IDLE")
         self.replan()
 
     def arrive_at_detour_viewpoint(self):
         self.log("Reached detour viewpoint")
-        self.start_observation_stop(self.detour["entry"])
+        if not self.start_observation_stop(self.detour["entry"]):
+            self.log("Detour done; replanning to the goal (targets already checked)")
+            self.detour = None
+            self.switch_mode("IDLE")
+            self.replan()
 
     def abandon_detour(self, reason):
         if self.detour is None:
@@ -381,21 +477,141 @@ class FastNavigator:
             elif self.aligned():
                 self.aligned_since = now
         elif self.mode == "TRACK":
-            self.track_checks()
+            self.progress = self.t_plan
+            if not self.check_detour_yields():
+                self.track_checks()
         elif self.mode in OBSERVE_MODES:
             self.observe_step()
         elif self.mode == "PARK_POSE":
             gx, gy, _ = self.park_goal
             if math.hypot(self.pose.x - gx, self.pose.y - gy) < self.p.park_pose_thresh:
-                self.heading.load_goal(self.goal[2] if self.goal else self.park_goal[2])
-                self.phase_start = now
-                self.mode = "PARK_HEADING"
+                if not self.start_goal_check():
+                    self.finish_park_pose()
         elif self.mode == "PARK_HEADING":
             if abs(wrap_angle(self.heading.th_g - self.pose.theta)) < self.p.theta_goal_thresh:
                 self.goal = None
                 self.park_goal = None
                 self.switch_mode("IDLE")
         self.move(dt)
+        self.publish_intents()
+
+    # ---------- Fleet coordination (localize_and_navigate "Fleet coordination") ----------
+
+    def peer_intents(self, object_id):
+        return [i for i in self.sim.peer_intents(self.robot) if i.object_id == object_id]
+
+    def live_yielded(self):
+        self.yielded = {oid: rid for oid, rid in self.yielded.items()
+                        if any(i.robot_id == rid for i in self.peer_intents(oid))}
+        return set(self.yielded)
+
+    def overhead_s(self):
+        if self.mode == "TRACK":
+            return 0.0
+        extra = self.p.post_align_pause_s
+        if self.mode in OBSERVE_MODES:
+            extra += self.p.observe_dwell_s * (len(self.observe_queue) + 1)
+        return extra
+
+    def pending_etas(self):
+        if self.mode in ("IDLE", "PARK_HEADING"):
+            return []
+        base = self.sim.now + self.overhead_s()
+        out, delay = [], 0.0
+        on_path = [] if self.mode == "PARK_POSE" else list(self.stops)
+        for e in on_path + ([self.goal_stop] if self.goal_stop is not None else []):
+            t = self.duration if e is self.goal_stop else e["t"]
+            eta = base + max(t - self.progress, 0.0) + delay
+            if e.get("detour"):
+                eta += float(e["stop"].to_view_s)
+            out.append((e, eta))
+            delay += float(e["stop"].cost_s)
+        return out
+
+    def entry_eta(self, entry):
+        for e, eta in self.pending_etas():
+            if e is entry:
+                return eta
+        return float(entry.get("eta", self.sim.now))
+
+    def planned_checks(self):
+        now = self.sim.now
+        out = []
+        if self.mode in OBSERVE_MODES and self.observe_stop is not None:
+            ids = ([self.observe_target[0]] if self.observe_target else []) + [q[0] for q in self.observe_queue]
+            out += [(self.observe_stop["stop"].kind, oid, now, True) for oid in ids]
+        if self.start_stop is not None:
+            out += [(AT_START, oid, now, False) for oid in self.start_stop["stop"].object_ids]
+        if self.detour is not None:
+            if self.mode not in OBSERVE_MODES:
+                eta = now + self.overhead_s() + max(self.duration - self.progress, 0.0)
+                out += [(DETOUR, oid, eta, True) for oid in self.detour["stop"].object_ids]
+            later = float(self.detour["stop"].cost_s)
+            for e in self.detour["displaced"]:
+                out += [(e["stop"].kind, oid, float(e.get("eta", now)) + later, False) for oid in e["stop"].object_ids]
+        else:
+            for e, eta in self.pending_etas():
+                if e.get("yielded") is None:
+                    out += [(e["stop"].kind, oid, eta, False) for oid in e["stop"].object_ids]
+        return out
+
+    def publish_intents(self):
+        if not self.p.observe_coordinate or not self.p.observe:
+            return
+        now = self.sim.now
+        if not self.intents_dirty and now - self.intents_sent_at < 1.0:
+            return
+        seen, intents = set(), []
+        for kind, oid, eta, committed in self.planned_checks():
+            if oid in seen:
+                continue
+            seen.add(oid)
+            intents.append(Intent(oid, self.robot.id, kind, eta, eta + max(30.0, 0.5 * (eta - now)), committed))
+        self.sim.intents.announce(self.robot.id, intents, now)
+        self.intents_dirty = False
+        self.intents_sent_at = now
+
+    def detour_winners(self, stop, eta, committed=False, remaining_s=None):
+        if not self.p.observe_coordinate:
+            return []
+        winners = []
+        for oid in stop.object_ids:
+            w = yields_to(DETOUR, eta, self.robot.id, self.peer_intents(oid), self.p.observe_intent_margin_s,
+                          self.p.observe_intent_commit_s, committed, remaining_s)
+            if w is None:
+                return []
+            winners.append((oid, w))
+        return winners
+
+    def record_yield(self, stop, winners):
+        for oid, w in winners:
+            self.yielded[oid] = w.robot_id
+        self.log("Detour to check %s yielded to robot %s", "+".join(stop.object_ids),
+                 ",".join(sorted({str(w.robot_id) for _oid, w in winners})))
+        self.intents_dirty = True
+
+    def check_detour_yields(self):
+        if not self.p.observe_coordinate:
+            return False
+        if self.detour is not None:
+            remaining = max(self.duration - self.progress, 0.0)
+            winners = self.detour_winners(self.detour["stop"], self.sim.now + remaining, committed=True,
+                                          remaining_s=remaining)
+            if winners:
+                self.record_yield(self.detour["stop"], winners)
+                self.detour = None
+                self.switch_mode("IDLE")
+                self.replan()
+                return True
+            return False
+        for e, eta in self.pending_etas():
+            if e.get("detour"):
+                winners = self.detour_winners(e["stop"], eta)
+                yielded = winners[0][1].robot_id if winners else None
+                if yielded != e.get("yielded"):
+                    e["yielded"] = yielded
+                    self.intents_dirty = True
+        return False
 
     def track_checks(self):
         if self.near_goal():

@@ -1,0 +1,38 @@
+# Fleet coordination: two robots would detour for the same object at the same time. cone_9 sits in the passage
+# north of the corridor (as in detour_present: no corridor point sees it, I_o about 9 m) and is known from a peer
+# at the start. Both robots patrol the corridor westwards past the passage, robot 92 about 3 m behind robot 91,
+# and both plan a detour to check it. Robot 92 reaches its leave point before robot 91's check is done, so the
+# ledger cannot tell it the cone was just seen; but robot 91 announced its check first, about 8 s earlier (within
+# the 10 s margin, so the lower robot id keeps it), and robot 92 gives way ("yielded to robot 91"). Without
+# coordination (observe_coordinate:=false) both robots detour.
+# Run: rosrun mattbot_sim run_fleet.py fleet_detour_race
+name: fleet_detour_race
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_detour: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+duration: 65                 # the race is over by then (later the two patrols meet head-on in the corridor)
+expect:
+  ledger_objects_added: 1
+  false_removals: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # ahead: its detour is the earlier check
+    start: {x: 42.0, y: 18.95, theta: 3.14159}
+    waypoints:   # a short first leg and a pause: the cone and its importance are known when the leg west is planned
+      - {x: 40.0, y: 18.95, theta: 3.14159, pause_s: 3}
+      - {x: 22.0, y: 18.95, theta: 0.0}
+      - {x: 46.0, y: 18.95, theta: 3.14159}
+    expect:
+      detours_started: 1
+      detours_yielded: 0
+  - id: 92                 # 3 m behind: gives way
+    start: {x: 45.0, y: 18.95, theta: 3.14159}
+    waypoints:
+      - {x: 43.0, y: 18.95, theta: 3.14159, pause_s: 3}
+      - {x: 22.0, y: 18.95, theta: 0.0}
+      - {x: 46.0, y: 18.95, theta: 3.14159}
+    expect:
+      detours_started: 0
+      min_detours_yielded: 1

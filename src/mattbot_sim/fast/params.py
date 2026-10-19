@@ -31,6 +31,9 @@ class FastParams:
     observe_scout_round_trip: bool = True
     observe_scout_fixed_s: float = 0.0
     observe_scout_per_s_away: float = 0.0
+    observe_coordinate: bool = True  # announce planned checks, detours / scouts give way to earlier ones
+    observe_intent_margin_s: float = 10.0
+    observe_intent_commit_s: float = 15.0
     miss_prob: float = 0.0
     pos_noise_std: float = 0.0
     false_pos_rate: float = 0.0
@@ -62,6 +65,8 @@ class FastParams:
     mapper_max_blockout_m: float = 0.5
     ledger_match_radius_m: float = 0.75
     resight_min_interval_s: float = 30.0
+    intent_delay_s: float = 1.5  # a robot's intents reach the others after this (1 Hz navigator + 2 s ledger re-send)
+    intent_stale_s: float = 10.0  # observation_ledger ~intent_stale_s
     r_min: float = 1.0  # observation_planner viewsheds
     r_max: float = 3.5
 

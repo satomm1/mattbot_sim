@@ -1,0 +1,38 @@
+# Fleet coordination: a cheap check makes a detour unnecessary. cone_9 sits in the passage north of the corridor
+# (hidden from the corridor, I_o about 9 m), known from a peer at the start. Robot 92 patrols the corridor and plans
+# a detour to check it. Robot 91 waits in the area north of the passage, then drives to a point 3.3 m north of the
+# cone, from where it can look at it when it parks (an AT_GOAL check, which never gives way). Its check is planned
+# for about the time robot 92 would look (within the 10 s margin; the lower robot id keeps it) but after robot 92's
+# leave point, so the ledger cannot tell robot 92 the cone was just seen: robot 92 gives way to the announced check,
+# on its way to the viewpoint, and returns to its patrol. Without coordination (observe_coordinate:=false) robot 92
+# checks the cone as well.
+# Run: rosrun mattbot_sim run_fleet.py fleet_opportunistic_beats_detour
+name: fleet_opportunistic_beats_detour
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_detour: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+duration: 70
+expect:
+  ledger_objects_added: 1
+  false_removals: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # looks at the cone on arrival (AT_GOAL)
+    start: {x: 25.0, y: 31.5, theta: 1.5708}
+    loop: false
+    waypoints:
+      - {x: 25.0, y: 33.5, theta: -1.5708, pause_s: 20}   # wait, so its check falls after robot 92's leave point
+      - {x: 25.0, y: 28.3, theta: -1.5708}
+    expect:
+      detours_started: 0
+  - id: 92                 # would detour; gives way (before leaving the corridor, or on the way to the viewpoint)
+    start: {x: 42.0, y: 18.95, theta: 3.14159}
+    waypoints:
+      - {x: 40.0, y: 18.95, theta: 3.14159, pause_s: 3}
+      - {x: 22.0, y: 18.95, theta: 0.0}
+      - {x: 46.0, y: 18.95, theta: 3.14159}
+    expect:
+      detours_reached: 0     # gives way before the viewpoint (without coordination it drives the whole detour)
+      min_detours_yielded: 1

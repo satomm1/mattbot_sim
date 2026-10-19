@@ -1,0 +1,26 @@
+# Check timing: a stop is planned for when the robot gets there. cone_3 is known from a peer at t = 0 (belief 1)
+# and is taken away at t = 1 s. With the robot's threshold (check_below_belief 0.5, belief hold 20 s + decay 40 s)
+# it becomes due at t = 40 s, while the robot is still on its first leg. Planning only for "now", no stop was
+# planned on that leg (belief 1 at t = 0) and the removal was found on the next leg, after this run ends. Planning
+# for the arrival time, the leg gets a stop just past x = 44 at about 46 s, the check reports ABSENT and the
+# ledger removes the cone. Run with: roslaunch mattbot_sim sim.launch scenario:=due_on_arrival observe_check_below_belief:=0.5
+name: due_on_arrival
+map: current_map
+launch_args: {observe_check_below_belief: 0.5}   # fast sim and run_fleet.py; for sim.launch pass it as an arg
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_3, class: cone, x: 43.0, y: 18.15, width: 0.3, known_from_peer: true}
+waypoints:   # a short first leg: the peer's report is in the ledger when the leg east is planned
+  - {x: 30.0, y: 18.95, theta: 0.0, pause_s: 2}
+  - {x: 46.0, y: 18.95, theta: 3.14159}
+  - {x: 28.0, y: 18.95, theta: 0.0}
+loop: true
+duration: 55
+events:
+  - {at: 1, remove: cone_3}
+expect:
+  correct_removals: 1
+  stale_ledger_objects: 0
+  false_removals: 0
+  observation_stops_by_kind.OPPORTUNISTIC.ENDED: 1
+  goal_resends: 0

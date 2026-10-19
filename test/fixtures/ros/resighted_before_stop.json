@@ -1,0 +1,163 @@
+{
+ "scenario": "resighted_before_stop",
+ "source": "ROS sim (sim.launch observe_check_below_belief:=0.5 speed:=2), 2026-10-19",
+ "summaries": [
+  {
+   "blockout_clear_after_s": [],
+   "blockouts_still_present": [],
+   "correct_removals": 0,
+   "detour_abandon_reasons": [],
+   "detour_stops": 0,
+   "detours_abandoned": 0,
+   "detours_cancelled": 0,
+   "detours_done": 0,
+   "detours_dropped": 0,
+   "detours_reached": 0,
+   "detours_started": 0,
+   "detours_yielded": 0,
+   "expectations": [
+    {
+     "actual": 1,
+     "expected": 1.0,
+     "key": "min_stops_skipped",
+     "ok": true,
+     "op": ">="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "observation_stops.STARTED",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "false_removals",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 0,
+     "expected": 0.0,
+     "key": "goal_resends",
+     "ok": true,
+     "op": "=="
+    },
+    {
+     "actual": 1,
+     "expected": 1,
+     "key": "loop_rates_ok",
+     "ok": true,
+     "op": "=="
+    }
+   ],
+   "expectations_passed": true,
+   "false_removals": 0,
+   "goal_resends": 0,
+   "goals_given_up": 0,
+   "ledger_objects_added": 1,
+   "loop_rates": {
+    "detector": {
+     "mean_hz": 5.0,
+     "min_window_hz": 5.0,
+     "nominal_hz": 5.0
+    },
+    "navigator": {
+     "mean_hz": 9.97,
+     "min_window_hz": 9.8,
+     "nominal_hz": 10.0
+    }
+   },
+   "loop_rates_ok": true,
+   "observation_outcomes": {
+    "ABSENT": 0,
+    "INCONCLUSIVE": 0,
+    "PRESENT": 0
+   },
+   "observation_outcomes_by_kind": {
+    "AT_GOAL": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "AT_START": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "DETOUR": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "OPPORTUNISTIC": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    },
+    "SCOUT": {
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0,
+     "PRESENT": 0
+    }
+   },
+   "observation_stops": {
+    "ABORTED": 0,
+    "ENDED": 0,
+    "STARTED": 0
+   },
+   "observation_stops_by_kind": {
+    "AT_GOAL": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "AT_START": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "DETOUR": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "OPPORTUNISTIC": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    },
+    "SCOUT": {
+     "ABORTED": 0,
+     "ENDED": 0,
+     "STARTED": 0
+    }
+   },
+   "removal_latency_s": null,
+   "run_s": 83.4,
+   "run_wall_s": 40.5,
+   "scenario": "resighted_before_stop",
+   "scout_best_net_m_by_object": {},
+   "scout_decisions": 0,
+   "scout_first_go_s_by_object": {},
+   "scout_go_by_object": {
+    "cone_3": 0
+   },
+   "scout_go_decisions": 0,
+   "scout_go_not_idle": 0,
+   "scout_yielded": 0,
+   "spurious_ledger_objects": 0,
+   "stale_ledger_objects": [],
+   "stop_skip_reasons": [
+    "98-1792451017-1: belief 1.00 > 0.50"
+   ],
+   "stops_skipped": 1,
+   "true_objects": [
+    "cone_3"
+   ],
+   "true_removals": 0,
+   "wrong_observation_outcomes": 0
+  }
+ ]
+}

@@ -16,7 +16,7 @@ import numpy as np
 
 from mattbot_sim.fast import imports  # noqa: F401
 from mattbot_sim.fast.checker import CheckPlanner, Evaluator, ObservationCore
-from mattbot_sim.fast.fleet import FleetLedger
+from mattbot_sim.fast.fleet import FleetIntentBoard, FleetLedger
 from mattbot_sim.fast.mapper import Mapper
 from mattbot_sim.fast.navigator import FastNavigator
 from mattbot_sim.fast.orchestrator import PatrolOrchestrator
@@ -80,6 +80,7 @@ class FastSim:
                                        for o in base.objects], now=0.0)
         self.core = ObservationCore(grid, p, cache_dir=roadmap_cache_dir)
         self.ledger = FleetLedger(p.ledger_match_radius_m, p.belief_hold_s, p.belief_decay_s)
+        self.intents = FleetIntentBoard(p.intent_delay_s, p.intent_stale_s)  # observation_ledger intents + DDS
         self.camera = CameraModel()
         self.noise = DetectorNoise(p.miss_prob, p.pos_noise_std, p.false_pos_rate)
 
@@ -110,6 +111,12 @@ class FastSim:
         self.next_frame = 0.0
 
     # ---------- Services for the navigator / orchestrator ----------
+
+    def peer_intents(self, robot):
+        """robot's view of the other robots' planned checks (/observation/intents without its own)."""
+        if not self.params.observe_coordinate:
+            return []
+        return self.intents.peers(robot.id, self.now, canonical=self.ledger.ledger.canonical)
 
     def beliefs(self):
         return self.ledger.beliefs(self.now)
@@ -232,7 +239,8 @@ class FastSim:
                     r.scout_idle = False
                 continue
             beliefs = self.beliefs() if beliefs is None else beliefs
-            decision = r.planner.evaluate_scout((r.pose.x, r.pose.y, r.pose.theta), beliefs, self.now, True)
+            decision = r.planner.evaluate_scout((r.pose.x, r.pose.y, r.pose.theta), beliefs, self.now, True,
+                                                peer_intents=self.peer_intents(r), robot_id=r.id)
             line = r.scorer.add_scout_decision(self.now, decision)
             if line:
                 self.note(r, line)

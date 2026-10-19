@@ -83,7 +83,7 @@ class SimMonitor:
             return  # latched decision from before this run
         decision = {"idle": msg.idle, "go": msg.go, "candidates": [
             {"object_ids": list(c.object_ids), "chosen": c.chosen, "value_m": c.value_m, "cost_m": c.cost_m,
-             "net_m": c.net_m, "to_view_m": c.to_view_m, "opportunity_m": c.opportunity_m, "t_away_s": c.t_away_s}
+             "net_m": c.net_m, "blocked": c.blocked, "to_view_m": c.to_view_m, "opportunity_m": c.opportunity_m, "t_away_s": c.t_away_s}
             for c in msg.candidates]}
         line = self.scorer.add_scout_decision(rospy.get_time(), decision)
         if line:

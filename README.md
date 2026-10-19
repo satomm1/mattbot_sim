@@ -46,6 +46,7 @@ Useful launch args:
 | `observe_detour` | `false` | let the robot leave its path to check objects no path point can see (see [Detours](#detours)) |
 | `observe_max_detour_m`, `observe_detour_n_trips`, `observe_detour_margin_m` | `15`, `5`, `0` | detour value rule, as in the navigation launch |
 | `observe_detour_timeout_factor` | `2` | the navigator abandons a detour after factor × estimated cost + 20 s |
+| `observe_coordinate`, `observe_intent_margin_s`, `observe_intent_commit_s` | `true`, `10`, `15` | fleet coordination: announce planned checks, detours / scouts give way to earlier ones (see [Several robots](#several-robots)) |
 | `roadmap_cache_dir` | `~/.ros/mattbot_roadmap` | observation_planner's roadmap / importance cache |
 | `miss_prob`, `pos_noise_std`, `false_pos_rate` | `0` | make the detector imperfect (per-object miss probability, metres, expected false detections per frame) |
 | `scan` | `false` | publish a simulated lidar scan for RViz |
@@ -167,6 +168,14 @@ as if robot `peer_id` (default 98) had seen it, which is how the fleet would lea
   ABSENT and the ledger removes it. Run it with `observe_detour:=false` for the baseline: the cone is never
   checked and stays in the ledger (`stale_ledger_objects`), so its expectations fail.
 - `detour_not_worth_it`: a cone in the dead-end room south of the east end (I_o = 0). Expected: no detour.
+- `endpoint_removed`: a cone around the corner past the patrol's east end, visible only from the park pose there (KNOWN_ISSUES 2.1),
+  removed at t = 120 s. Expected: endpoint checks (AT_GOAL on arrival, AT_START before leaving) confirm it and then report it ABSENT;
+  no opportunistic stop or detour is involved. Without endpoint checks it is never checked and stays in the ledger.
+- `due_on_arrival` (check timing): a cone known from a peer at t = 0 becomes due at 40 s, while the robot is still on its
+  first leg. The leg plans a stop for when the robot gets there, which finds the cone gone. Planning for "now" only, it
+  was found on the next leg, after the run ends. Uses the robot's threshold (`observe_check_below_belief: 0.5`).
+- `resighted_before_stop` (revalidation): the same, but the cone stays. The robot's own camera sees it on the way, the
+  ledger refreshes it, and the planned stop is skipped ("Skipping check ... belief 1.00 > 0.50").
 
 ```bash
 roslaunch mattbot_sim sim.launch scenario:=detour_present observe_detour:=true
@@ -221,6 +230,14 @@ Each robot's `expect` is merged over the shared one. A waypoint may also set `pa
 - `fleet_detour_handoff`: robot 91 spots `cone_9` in the north passage and leaves. Robot 92, patrolling the
   corridor, learns it over DDS and checks it by detour. The cone is gone by then, and the removal reaches
   robot 91.
+
+Fleet coordination (the robots announce their planned checks; mattbot_navigation README "Fleet coordination").
+Each scenario fails with `observe_coordinate:=false`, where both robots check:
+- `fleet_detour_race`: two robots patrol the corridor 3 m apart, and both plan a detour to `cone_9`. Robot 92 reaches
+  its leave point before robot 91's check is done, and gives way to it.
+- `fleet_opportunistic_beats_detour`: robot 91 will look at `cone_9` when it parks north of the passage (AT_GOAL).
+  Robot 92's detour gives way to that announced check.
+- `fleet_scout_yields`: idle robot 92 (as `scout_present`) does not decide to scout while robot 91 announces its check.
 
 CPU: every robot runs the whole stack plus 8 DDS processes. Watch `loop_rates_ok` in each robot's summary
 before raising `--speed` or adding robots.
@@ -298,9 +315,11 @@ After a change to the robot code:
 - `spurious_ledger_objects`: ledger objects with no true object nearby
 - `observation_stops` (STARTED / ENDED / ABORTED) and `observation_outcomes` (PRESENT / ABSENT / INCONCLUSIVE), plus `wrong_observation_outcomes`
 - `blockouts_still_present` / `blockout_clear_after_s`: whether the mapper's `/object_map` blockout cleared after a ledger removal (today it only expires by TTL)
-- `observation_stops_by_kind` / `observation_outcomes_by_kind` (OPPORTUNISTIC / DETOUR), and `detour_stops` (DETOUR stops ENDED). The `stops` list in the JSON has every stop event with the robot's position.
+- `observation_stops_by_kind` / `observation_outcomes_by_kind` (OPPORTUNISTIC / DETOUR / SCOUT / AT_START / AT_GOAL), and `detour_stops` (DETOUR stops ENDED). The `stops` list in the JSON has every stop event with the robot's position.
 - `detours_started` / `detours_reached` / `detours_done` / `detours_abandoned` / `detours_cancelled`, plus `detour_abandon_reasons`. These are read from the navigator's log on `/rosout_agg`, because abandoned and cancelled detours publish no ObservationEvent.
 - `run_s` / `run_wall_s` (simulated / wall seconds) and `loop_rates` / `loop_rates_ok`: whether the stack kept up with simulated time. A scenario with `expect:` also gets a `loop_rates_ok` check.
+- `stops_skipped` / `stop_skip_reasons`, `detours_dropped`: checks skipped by revalidation because they no longer passed the rules when the robot got there, and detours not started at the leave point for that reason.
+- `detours_yielded` / `scout_yielded`: detours given up, and scout candidates blocked, because another robot announced an earlier check.
 - `goal_resends` / `goals_given_up`: how often `scenario_runner` had to re-send a goal because the navigator went idle short of it. A re-send can hide a navigator that never replanned, for example after a detour.
 
 A scenario's optional `expect:` block is checked at the end of the run. The summary prints PASS/FAIL per key and stores it under `summary.expectations`. Keys are summary fields, with dotted paths for nested ones and lists counted by length. An optional `min_` / `max_` prefix turns the check into a lower or upper bound; without a prefix it checks equality:

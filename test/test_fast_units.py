@@ -144,3 +144,116 @@ def test_scout_params_and_idle_gate():
     r = next(iter(sim.robots.values()))
     d = r.planner.evaluate_scout((30.0, 18.95, 3.14159), [], sim.now, True)
     assert d == {"idle": True, "go": False, "candidates": []}  # no objects: no candidates
+
+
+def _mode_trace(sim, until_s, on_step=None):
+    """[(t, mode)] of the first robot's mode changes while stepping sim to until_s."""
+    r = next(iter(sim.robots.values()))
+    trace = [(sim.now, r.nav.mode)]
+    sim.orchestrator.on_start(sim)
+    while sim.now < until_s:
+        if on_step is not None:
+            on_step(sim, r)
+        sim.step()
+        if r.nav.mode != trace[-1][1]:
+            trace.append((sim.now, r.nav.mode))
+    return r, trace
+
+
+def _contains_in_order(modes, expected):
+    it = iter(modes)
+    return all(any(m == e for m in it) for e in expected)
+
+
+def test_endpoint_checks_at_goal_then_at_start(tmp_path):
+    import yaml
+    from mattbot_sim.fast.sim import FastSim
+
+    # endpoint_removed without the removal, and a long wait at the east end: the cone (seen only from there) is
+    # checked on arrival (AT_GOAL), and again before leaving once that check's cooldown and hold are over (AT_START)
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scenarios", "endpoint_removed.yaml")
+    with open(path) as f:
+        sc = yaml.safe_load(f)
+    sc["events"], sc["expect"] = [], {}
+    sc["waypoints"][0]["pause_s"] = 90.0
+    variant = tmp_path / "endpoint_wait.yaml"
+    variant.write_text(yaml.safe_dump(sc))
+    sim = FastSim(str(variant), seed=0, duration=200.0)
+    r, trace = _mode_trace(sim, 200.0)
+    modes = [m for _t, m in trace]
+    # Goal check: park, look, then the final heading turn
+    assert _contains_in_order(modes, ["TRACK", "PARK_POSE", "OBSERVE_TURN", "OBSERVE_DWELL", "PARK_HEADING", "IDLE"])
+    # Start check: look before leaving the east end, then ALIGN and TRACK
+    i = max(k for k, (t, m) in enumerate(trace) if m == "OBSERVE_DWELL")
+    assert [m for _t, m in trace[i - 2:i + 3]] == ["IDLE", "OBSERVE_TURN", "OBSERVE_DWELL", "ALIGN", "TRACK"]
+    s = r.scorer.summary(sim.now)
+    assert s["observation_stops_by_kind"]["AT_GOAL"]["ENDED"] >= 1
+    assert s["observation_stops_by_kind"]["AT_START"]["ENDED"] == 1
+
+
+def test_new_goal_during_a_goal_check_aborts_it():
+    from mattbot_sim.fast.sim import FastSim
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scenarios", "endpoint_removed.yaml")
+    sim = FastSim(path, seed=0, duration=120.0)
+    sent = []
+
+    def on_step(sim, r):
+        if not sent and r.nav.mode == "OBSERVE_DWELL":
+            sent.append(sim.now)
+            r.nav.set_goal(30.0, 18.95, 0.0)
+
+    r, trace = _mode_trace(sim, 90.0, on_step)
+    assert sent
+    after = [m for t, m in trace if t >= sent[0]]
+    assert "PARK_HEADING" not in after and "TRACK" in after  # left for the new goal without finishing the park
+    s = r.scorer.summary(sim.now)
+    assert s["observation_stops_by_kind"]["AT_GOAL"]["ABORTED"] == 1
+
+
+def _detour_sim(**params):
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scenarios", "detour_present.yaml")
+    sim = FastSim(path, params=FastParams().update(params) if params else None, seed=0, duration=300.0)
+    sim.orchestrator.on_start(sim)
+    return sim, next(iter(sim.robots.values()))
+
+
+def _step_until(sim, cond, limit_s):
+    while sim.now < limit_s and not cond():
+        sim.step()
+    return cond()
+
+
+def test_pending_detour_yields_and_comes_back_when_the_winner_withdraws():
+    from dds_utils.intents import Intent
+
+    sim, r = _detour_sim()
+    assert _step_until(sim, lambda: any(e["detour"] for e in r.nav.stops), 300.0)
+    entry = next(e for e in r.nav.stops if e["detour"])
+    oid = entry["stop"].object_ids[0]
+    # Robot 50 announces an earlier check of the same object: the pending detour is marked, not announced
+    sim.intents.announce(50, [Intent(oid, 50, 0, sim.now + 2.0, sim.now + 120.0)], sim.now)
+    assert _step_until(sim, lambda: entry.get("yielded") == 50, sim.now + 5.0)
+    # Robot 50 withdraws it (an empty set) before the leave point: the detour is back and is driven
+    sim.intents.announce(50, [], sim.now)
+    assert _step_until(sim, lambda: entry.get("yielded") is None, sim.now + 5.0)
+    assert _step_until(sim, lambda: r.nav.detour is not None, sim.now + 120.0)
+    assert r.scorer.summary(sim.now)["detours_yielded"] == 0
+
+
+def test_active_detour_yields_mid_route_and_resumes_the_goal():
+    from dds_utils.intents import Intent
+
+    sim, r = _detour_sim(observe_intent_commit_s=0.0)  # the detour is shorter than the default commit window
+    assert _step_until(sim, lambda: r.nav.detour is not None and r.nav.mode == "TRACK", 300.0)
+    oid = r.nav.detour["stop"].object_ids[0]
+    goal = r.nav.goal
+    sim.intents.announce(50, [Intent(oid, 50, 0, sim.now, sim.now + 60.0, committed=True)], sim.now)
+    assert _step_until(sim, lambda: r.nav.detour is None, sim.now + 5.0)
+    assert r.nav.goal == goal and r.nav.yielded == {oid: 50}
+    assert r.scorer.summary(sim.now)["detours_yielded"] == 1
+    # The yielded object is not offered again while robot 50 still plans the check
+    assert oid in r.nav.live_yielded()

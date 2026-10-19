@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 OUTCOMES = ("PRESENT", "ABSENT", "INCONCLUSIVE")
-KINDS = ("OPPORTUNISTIC", "DETOUR", "SCOUT")  # mattbot_dds/ObservationStop kind constants, in order
+KINDS = ("OPPORTUNISTIC", "DETOUR", "SCOUT", "AT_START", "AT_GOAL")  # mattbot_dds/ObservationStop kind constants, in order
 STOP_EVENTS = ("STARTED", "ENDED", "ABORTED")
 
 # Navigator log lines (localize_and_navigate.py _start_detour / _arrive_at_detour_viewpoint / detour resume /
@@ -64,10 +64,14 @@ class RunScorer:
     last_kind: Dict[str, str] = field(default_factory=dict)  # object_id -> kind of its latest stop
     detours: Dict[str, int] = field(default_factory=lambda: {name: 0 for name, _ in DETOUR_LOG})
     detour_reasons: List[str] = field(default_factory=list)  # abandon / cancel reasons
+    # Revalidation (localize_and_navigate._revalidate): checks skipped because they no longer passed the rules
+    skips: List[str] = field(default_factory=list)  # "<object_id>: <reason>"
+    detours_dropped: int = 0  # detours not started at the leave point (no target still due)
+    detours_yielded: int = 0  # detours given up for another robot's earlier check (planned or under way)
     runner: Dict[str, int] = field(default_factory=lambda: {"resend": 0, "give_up": 0})
     blockouts: List[dict] = field(default_factory=list)  # one per correct removal
     # Scout decisions (observation_planner /observation/scout; decision only, nothing drives a scout yet)
-    scout: Dict[str, int] = field(default_factory=lambda: {"decisions": 0, "go": 0, "go_not_idle": 0})
+    scout: Dict[str, int] = field(default_factory=lambda: {"decisions": 0, "go": 0, "go_not_idle": 0, "yielded": 0})
     scout_go_by_object: Dict[str, int] = field(default_factory=dict)  # true object id (else ledger id) -> GOs
     scout_first_go_s: Dict[str, float] = field(default_factory=dict)  # s from ledger entry to the first GO
     scout_best_net_m: Dict[str, float] = field(default_factory=dict)  # max V - C over idle decisions
@@ -158,7 +162,19 @@ class RunScorer:
         return None
 
     def add_nav_log(self, text):
-        """A navigator log line; counts detour lifecycle steps. Returns a log line if it was one."""
+        """A navigator log line; counts detour lifecycle steps and revalidation skips. Returns a log line
+        if it was one."""
+        if "Skipping check of " in text:
+            rest = text.split("Skipping check of ", 1)[1].strip()
+            oid, _sep, reason = rest.partition(" (")
+            self.skips.append("%s: %s" % (oid, reason.rstrip(")")))
+            return "navigator: " + text.strip()
+        if "yielded to robot" in text and "Detour to check" in text:
+            self.detours_yielded += 1
+            return "navigator: " + text.strip()
+        if "dropped: no longer due" in text:
+            self.detours_dropped += 1
+            return "navigator: " + text.strip()
         for name, pattern in DETOUR_LOG:
             if pattern in text and (name != "abandoned" or "Detour to check" in text):
                 self.detours[name] += 1
@@ -205,7 +221,7 @@ class RunScorer:
     def add_scout_decision(self, t, decision):
         """One scout decision, as a dict (both sims build the same shape):
 
-            {"idle": bool, "go": bool, "candidates": [{"object_ids": [ledger ids], "chosen": bool,
+            {"idle": bool, "go": bool, "candidates": [{"object_ids": [ledger ids], "chosen": bool, "blocked": str,
              "value_m", "cost_m", "net_m", "to_view_m", "opportunity_m", "t_away_s"}, ...]}
 
         Object ids are ledger ids; they are scored as the true objects they matched. Returns a log line
@@ -220,6 +236,8 @@ class RunScorer:
             self.scout["decisions"] += 1
             self.scout["go"] += int(go)
             for c in cands:
+                if "checks first" in str(c.get("blocked", "")):  # gave way to another robot's earlier check
+                    self.scout["yielded"] += 1
                 for oid in c["object_ids"]:
                     tid = self._true_id(oid)
                     self.scout_best_net_m[tid] = max(self.scout_best_net_m.get(tid, -math.inf), float(c["net_m"]))
@@ -291,6 +309,11 @@ class RunScorer:
             "detours_abandoned": self.detours["abandoned"],
             "detours_cancelled": self.detours["cancelled"],
             "detour_abandon_reasons": list(self.detour_reasons),
+            "stops_skipped": len(self.skips),
+            "stop_skip_reasons": list(self.skips),
+            "detours_dropped": self.detours_dropped,
+            "detours_yielded": self.detours_yielded,
+            "scout_yielded": self.scout["yielded"],
             "goal_resends": self.runner["resend"],
             "goals_given_up": self.runner["give_up"],
             "wrong_observation_outcomes": sum(1 for r in self.results if r["verdict"] == "WRONG"),

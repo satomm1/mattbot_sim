@@ -156,13 +156,16 @@ def check_scenario(scenario, map_json_dir, cache_dir, n_trips=5.0, margin_m=0.0,
         r = ObjectResult(o.object_id, setup.importance[o.object_id],
                          any(camera_sees(setup.world, p, o) for _name, p in paths))
         for name, path in paths:
-            leg = LegResult(name, policy.checkable_from_path(path, vs))
+            # Belief 0 (eligible): an on-path or endpoint stop serves the object iff a usable point sees it
+            # (patrol legs are first plans for their goals, so the robot may look from the leg's start too)
+            leg = LegResult(name, policy.checkable_from_path(path, vs, start_xy=path[0]))
             if not leg.visible_from_path:
                 leg.d_star = policy.max_detour_m(c)
                 if leg.d_star > 0:
                     detours = planner.compute(path, {o.object_id: (o.x, o.y, planner.viewpoint_nodes(vs), leg.d_star)},
                                               dparams)
-                    chosen, evaluations = policy.detour_options(path, [c], {o.object_id: vs}, 0.0, detours=detours)
+                    chosen, evaluations = policy.detour_options(path, [c], {o.object_id: vs}, 0.0, detours=detours,
+                                                                covered=frozenset(), start_xy=path[0])
                     if evaluations:
                         ev = evaluations[0]
                         leg.detour_m, leg.value_m, leg.cost_m = ev.detour_m, ev.value_m, ev.cost_m

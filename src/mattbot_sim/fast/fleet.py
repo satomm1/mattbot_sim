@@ -12,6 +12,7 @@ from typing import Dict, List
 
 from mattbot_sim.fast import imports  # noqa: F401
 from dds_utils.belief import object_state, objects_from_ledger
+from dds_utils.intents import IntentBoard
 from dds_utils.ledger import GatedResolver, Observation, ObservationLedger, Removal, make_obs_id
 
 
@@ -25,6 +26,7 @@ class Belief:
     y: float
     width: float
     belief: float
+    last_stamp: float = None  # latest observation (any robot)
 
 
 @dataclass
@@ -93,7 +95,33 @@ class FleetLedger:
         out = []
         for obj in objects_from_ledger(entries):
             s = object_state(obj, now, self.hold_s, self.decay_s)
-            out.append(Belief(obj.object_id, obj.class_name, obj.x, obj.y, float(obj.width), float(s.belief)))
+            out.append(Belief(obj.object_id, obj.class_name, obj.x, obj.y, float(obj.width), float(s.belief),
+                              float(obj.last_stamp)))
         out.sort(key=lambda b: b.belief)
         self._beliefs = (now, self.version, out)
         return out
+
+
+class FleetIntentBoard:
+    """observation_ledger's IntentBoard for the whole fleet: a robot's set reaches the others delay_s after it
+    is announced (the navigator's 1 Hz announce and the ledger's re-send over DDS)."""
+
+    def __init__(self, delay_s=1.5, stale_s=10.0):
+        self.delay_s = float(delay_s)
+        self.board = IntentBoard(stale_s=stale_s)
+        self._in_flight = []  # (deliver_at, robot_id, intents)
+
+    def announce(self, robot_id, intents, now):
+        self._in_flight.append((now + self.delay_s, int(robot_id), list(intents)))
+
+    def _deliver(self, now):
+        due = [m for m in self._in_flight if m[0] <= now + 1e-9]
+        if due:
+            self._in_flight = [m for m in self._in_flight if m[0] > now + 1e-9]
+            for deliver_at, robot_id, intents in sorted(due, key=lambda m: m[0]):
+                self.board.set_robot(robot_id, intents, deliver_at)
+
+    def peers(self, robot_id, now, canonical=None):
+        """Live intents of the other robots, as robot_id's /observation/intents shows them."""
+        self._deliver(now)
+        return self.board.live(now, canonical=canonical, exclude_robot=int(robot_id))

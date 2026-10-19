@@ -61,6 +61,9 @@
   <arg name="observe_scout_round_trip" default="true"/>
   <arg name="observe_scout_fixed_s" default="0.0"/>
   <arg name="observe_scout_per_s_away" default="0.0"/>
+  <arg name="observe_coordinate" default="true"/>  <!-- Announce planned checks; detours / scouts give way to other robots' earlier checks -->
+  <arg name="observe_intent_margin_s" default="10.0"/>  <!-- Earlier by more than this wins; within it the lower robot id -->
+  <arg name="observe_intent_commit_s" default="15.0"/>  <!-- A detour this close to its viewpoint no longer gives way (s) -->
   <arg name="roadmap_cache_dir" default="$(env HOME)/.ros/mattbot_roadmap"/>
 
   <!-- Simulated time: sim_world publishes /clock and runs it at speed x real time (all nodes follow ROS time).
@@ -117,6 +120,9 @@
     <arg name="observe_scout_round_trip" value="$(arg observe_scout_round_trip)"/>
     <arg name="observe_scout_fixed_s" value="$(arg observe_scout_fixed_s)"/>
     <arg name="observe_scout_per_s_away" value="$(arg observe_scout_per_s_away)"/>
+    <arg name="observe_coordinate" value="$(arg observe_coordinate)"/>
+    <arg name="observe_intent_margin_s" value="$(arg observe_intent_margin_s)"/>
+    <arg name="observe_intent_commit_s" value="$(arg observe_intent_commit_s)"/>
   </include>
   <!-- Not exposed by the navigation launch; the nodes' private params are set from here -->
   <param name="observation_planner/cooldown_s" value="$(arg observe_cooldown_s)"/>

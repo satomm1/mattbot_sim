@@ -1,0 +1,35 @@
+# Fleet coordination: a scout (the most expensive check) gives way to any check that is not later. Robot 92 is the
+# idle robot of scout_present: alone, it decides to scout cone_9 (hidden in the passage north of the corridor) from
+# t = 30 s on. Robot 91 waits in the area north of the passage and at about 25 s drives to a point 3.3 m north of
+# the cone, where it looks at it on arrival (AT_GOAL). While that check is announced, robot 92's scout candidates
+# are blocked ("robot 91 checks first"), and once it is done the cone's belief is back to 1: no scout is decided.
+# Without coordination (observe_coordinate:=false) robot 92 decides to scout at 30 s.
+# Run: rosrun mattbot_sim run_fleet.py fleet_scout_yields
+name: fleet_scout_yields
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_scout: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+duration: 60
+expect:
+  ledger_objects_added: 1
+  false_removals: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # looks at the cone on arrival (AT_GOAL)
+    start: {x: 25.0, y: 31.5, theta: 1.5708}
+    loop: false
+    waypoints:
+      - {x: 25.0, y: 33.5, theta: -1.5708, pause_s: 15}
+      - {x: 25.0, y: 28.3, theta: -1.5708}
+    expect:
+      min_observation_stops_by_kind.AT_GOAL.ENDED: 1
+  - id: 92                 # idle in the corridor (as scout_present)
+    start: {x: 28.0, y: 18.95, theta: 0.0}
+    loop: false
+    waypoints:
+      - {x: 30.0, y: 18.95, theta: 3.14159}
+    expect:
+      scout_go_decisions: 0
+      min_scout_yielded: 1
