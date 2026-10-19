@@ -170,6 +170,10 @@ class FastNavigator:
             if self.detour is not None:
                 self.arrive_at_detour_viewpoint()
             else:
+                # localize_and_navigate.replan: park at the end of this short path with the goal heading
+                end = plan.path[-1] if plan.path else (g[0], g[1])
+                self.park_goal = (float(end[0]), float(end[1]), float(g[2]))
+                self.log("Path too short to track; parking at (%.2f, %.2f)", end[0], end[1])
                 self.enter_park_pose()
             return
         self.plan = (plan.times, plan.traj)
@@ -192,7 +196,7 @@ class FastNavigator:
     def enter_park_pose(self):
         g = self.goal
         if self.park_goal is None and g is not None:
-            self.park_goal = g  # (the navigator would reuse a stale trajectory end here)
+            self.park_goal = g
         if self.park_goal is None:
             self.switch_mode("IDLE")
             return

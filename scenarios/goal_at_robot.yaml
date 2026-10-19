@@ -1,0 +1,21 @@
+# Regression: a goal (almost) at the robot's own position. The planner returns a path too short to track and the
+# navigator parks directly. It used to park toward a stale target (the previous plan's end, or the map origin
+# (0, 0) before any plan): the pose controller drove straight at it, ignoring obstacles, or never got there. Now it
+# parks at the goal, turns to the goal heading and goes on with the patrol: chair_1 further along the corridor is
+# checked on the next leg.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=goal_at_robot
+name: goal_at_robot
+map: current_map
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: chair_1, class: chair, x: 35.0, y: 19.7, width: 0.4, known_from_peer: true}   # planned for the next leg
+waypoints:
+  - {x: 28.05, y: 18.95, theta: 1.5708, pause_s: 2}   # where the robot already is: a path too short to track
+  - {x: 40.0, y: 18.95, theta: 0.0}
+loop: false
+duration: 120
+expect:
+  min_observation_stops_by_kind.OPPORTUNISTIC.ENDED: 1
+  goal_resends: 0
+  goals_given_up: 0
+  false_removals: 0

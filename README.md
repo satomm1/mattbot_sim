@@ -171,6 +171,8 @@ as if robot `peer_id` (default 98) had seen it, which is how the fleet would lea
 - `endpoint_removed`: a cone around the corner past the patrol's east end, visible only from the park pose there (KNOWN_ISSUES 2.1),
   removed at t = 120 s. Expected: endpoint checks (AT_GOAL on arrival, AT_START before leaving) confirm it and then report it ABSENT;
   no opportunistic stop or detour is involved. Without endpoint checks it is never checked and stays in the ledger.
+- `goal_at_robot` (regression): the first goal is where the robot already is. The navigator parks at it and goes on
+  (it used to park toward a stale target, the map origin before any plan, and stay in PARK_POSE).
 - `due_on_arrival` (check timing): a cone known from a peer at t = 0 becomes due at 40 s, while the robot is still on its
   first leg. The leg plans a stop for when the robot gets there, which finds the cone gone. Planning for "now" only, it
   was found on the next leg, after the run ends. Uses the robot's threshold (`observe_check_below_belief: 0.5`).
