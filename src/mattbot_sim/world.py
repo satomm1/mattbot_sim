@@ -214,15 +214,34 @@ class World:
         ranges[ranges > max_range] = np.inf
         return ranges
 
+    # Rays across the target's width (fractions of its radius, perpendicular to the view) and how many must
+    # be clear: a detector still finds a mostly visible object, so a thin occluder (a chair leg, one stray map
+    # cell) does not hide a wide object, while a wall corner hiding most of it does. The same rule as the
+    # observation planner's viewsheds (navigation_utils.viewpoints LOS_*; test_world checks they match).
+    LOS_OFFSETS = (-0.8, -0.4, 0.0, 0.4, 0.8)
+    LOS_MIN_CLEAR = 3
+
     def line_of_sight(self, x0, y0, target, margin=0.05):
-        """True if nothing blocks the view from (x0, y0) to the near side of ``target`` (a SimObject)."""
-        dist = math.hypot(target.x - x0, target.y - y0)
-        reach = dist - target.radius - margin  # the ray may end at the object's surface
-        if reach <= 0.0:
+        """True if at least LOS_MIN_CLEAR of the rays from (x0, y0) to points across ``target`` (a SimObject)
+        reach its near side unblocked."""
+        dx, dy = target.x - x0, target.y - y0
+        dist = math.hypot(dx, dy)
+        if dist - target.radius - margin <= 0.0:
             return True
-        angle = math.atan2(target.y - y0, target.x - x0)
-        hit = self.raycast(x0, y0, [angle], reach, exclude=(target.object_id,))[0]
-        return not np.isfinite(hit)
+        px, py = -dy / dist, dx / dist  # perpendicular to the view
+        clear = 0
+        for k, f in enumerate(self.LOS_OFFSETS):
+            tx, ty = target.x + f * target.radius * px, target.y + f * target.radius * py
+            angle = math.atan2(ty - y0, tx - x0)
+            surface = ray_circle(x0, y0, [angle], target.x, target.y, target.radius)[0]  # where it enters the target
+            reach = min(surface, math.hypot(tx - x0, ty - y0)) - margin
+            if reach <= 0.0 or not np.isfinite(self.raycast(x0, y0, [angle], reach, exclude=(target.object_id,))[0]):
+                clear += 1
+            if clear >= self.LOS_MIN_CLEAR:
+                return True
+            if clear + len(self.LOS_OFFSETS) - k - 1 < self.LOS_MIN_CLEAR:
+                return False
+        return False
 
     def collides(self, x, y, radius):
         """True if a disc of ``radius`` at (x, y) overlaps a blocking cell or a present object."""

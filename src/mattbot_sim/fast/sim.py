@@ -131,6 +131,8 @@ class FastSim:
 
     def robot_collides(self, robot, x, y):
         """Moving robot to (x, y) would hit another robot (moves that increase the distance are allowed)."""
+        if not self.params.robots_block:
+            return False
         limit = 2.0 * self.params.robot_radius + 0.05
         for o in self.robots.values():
             if o is robot:

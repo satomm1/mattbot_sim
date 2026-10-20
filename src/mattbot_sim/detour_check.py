@@ -122,7 +122,7 @@ class _Setup:
         for o in self.objects:
             blockers, _sig = nearby_blockers(o.object_id, (o.x, o.y), all_objects, r_max + 1.0)
             self.views[o.object_id] = compute_viewshed(blocking, (o.x, o.y), origin, res, r_min, r_max,
-                                                       blockers=blockers)
+                                                       blockers=blockers, obj_width=o.width)
 
     def candidate(self, o):
         from navigation_utils.observation_policy import Candidate

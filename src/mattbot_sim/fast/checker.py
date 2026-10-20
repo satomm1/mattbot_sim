@@ -104,13 +104,14 @@ class ObservationCore:
         all_objects = [(o.object_id, o.x, o.y, o.width) for o in candidates]
         for c in wanted:
             blockers, signature = nearby_blockers(c.object_id, (c.x, c.y), all_objects, p.r_max + 1.0)
+            signature = (round(c.width, 1),) + tuple(signature)  # the viewshed depends on the object's width
             cached = self.viewsheds.get(c.object_id)
             if cached is not None:
                 vs, sig = cached
                 if sig == signature and math.hypot(vs.obj_xy[0] - c.x, vs.obj_xy[1] - c.y) <= RECOMPUTE_MOVE_M:
                     continue
             vs = compute_viewshed(self.blocking, (c.x, c.y), self.origin, self.grid.resolution, p.r_min, p.r_max,
-                                  blockers=blockers)
+                                  blockers=blockers, obj_width=c.width)
             self.viewsheds[c.object_id] = (vs, signature)
         live = {c.object_id for c in candidates}
         for oid in [oid for oid in self.viewsheds if oid not in live]:

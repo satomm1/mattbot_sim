@@ -294,7 +294,9 @@ Only the ROS glue is re-implemented, following the nodes:
   robots' mappers.
 - **Robots see and block each other** (the ROS sim can't do this). Robots occlude each other's camera. A
   robot that would drive into another waits, and after `block_wait_s` (3 s) replans around it, as A* does
-  with other robots. The real navigator does not stop for other robots.
+  with other robots. The real navigator does not stop for other robots. Two robots meeting head-on can
+  livelock (both replan around each other every few seconds), so experiments set `robots_block: false`:
+  robots then pass through each other, as in the ROS sim (they still occlude each other's camera).
 - **Fleet scenarios start together**, so `fleet_start_s` is not used. Scripted `goals: [{at, robot, x, y,
   theta}]` pre-empt a patrol. `--orchestrator package.module:Class` replaces the patrol logic with your own
   (see `fast/orchestrator.py`).

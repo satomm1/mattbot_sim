@@ -1,4 +1,4 @@
-# Pilot experiment: does re-checking help? Three robots run the same 40 trips between landmarks on current_map
+# Pilot experiment: does re-checking help? Three robots run the same 20 trips between landmarks on current_map
 # while four obstacles appear (in passages that have a way around) and are later taken away. Conditions add the
 # re-checking mechanisms one by one; every condition runs the same seeded instances (tasks, obstacle placements
 # and times). Run:  python3 mattbot_sim/scripts/experiment.py run mattbot_sim/experiments/pilot.yaml --jobs 4
@@ -10,8 +10,9 @@ robots:
   - {id: 92, start: {x: 60.0, y: 18.95, theta: 3.14159}}
   - {id: 93, start: {x: 44.0, y: 4.0, theta: 0.0}}
 tasks:
-  count: 40
-  release_rate_per_min: 2.0      # Poisson releases: about 20 min of work arriving
+  count: 20
+  release_rate_per_min: 0.5      # Poisson releases over about 40 min; the fleet does about 1.1 trips/min,
+                                 # so robots are idle about half the time (scouts need idle robots)
   dwell_s: 5                     # wait at each destination before the next task
 obstacles:
   count: 4
@@ -30,6 +31,7 @@ common:                          # the robots' real belief model and check setti
   observe_cooldown_s: 120
   observe_dwell_s: 4
   ledger_blockout: true          # the fleet plans around every ledger object until it is removed
+  robots_block: false            # robots pass through each other (as the real navigator and the ROS sim; blocking livelocks)
 conditions:
   none: {observe: false}
   opportunistic: {observe: true}
