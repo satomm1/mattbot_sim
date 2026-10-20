@@ -52,17 +52,19 @@ class Planner:
 
     def grid(self, object_layer=None, version=None):
         """Static grid, or the cell-wise max with an object layer (HxW, 100 = blocked) as the navigator's
-        _planning_occupancy(). ``version`` lets repeated calls reuse the combined grid."""
+        _planning_occupancy(). ``version`` lets repeated calls reuse the combined grid (and its footprint lookup);
+        a (robot id, layer version) version keeps one combined grid per robot."""
         if object_layer is None:
             return self.static
         key = version if version is not None else id(object_layer)
-        cached = self._layer_cache.get(key)
-        if cached is None:
-            cached = copy.copy(self.static)
-            cached.probs = np.maximum(self.static.probs, np.asarray(object_layer, dtype=self.static.probs.dtype)
-                                      .reshape(self.static.probs.shape))
-            self._layer_cache = {key: cached}  # one live object-layer version per robot is enough
-        return cached
+        slot = key[0] if isinstance(key, tuple) else None
+        cached = self._layer_cache.get(slot)
+        if cached is None or cached[0] != key:
+            grid = copy.copy(self.static)
+            grid.probs = np.maximum(self.static.probs, np.asarray(object_layer, dtype=self.static.probs.dtype)
+                                    .reshape(self.static.probs.shape))
+            cached = self._layer_cache[slot] = (key, grid)  # one live object-layer version per robot is enough
+        return cached[1]
 
     def object_grid(self, object_layer, robot_d):
         """Object layer alone (for path_still_valid), with its own robot_d."""

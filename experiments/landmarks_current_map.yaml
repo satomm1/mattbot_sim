@@ -1,0 +1,18 @@
+# Task destinations on current_map (local map frame, m): [x, y, theta]. Spread over the corridors and rooms so
+# that trips cross the map's loops; experiment.py generate snaps any that are not free to the nearest roadmap node.
+west_south: [6.0, 6.0, 1.5708]
+west_mid: [5.5, 42.0, 1.5708]
+north_west: [6.0, 57.0, 0.0]
+north_room_w: [16.5, 50.0, 0.0]
+north_top: [22.5, 57.0, 0.0]
+north_room_e: [32.6, 44.0, -1.5708]   # (the stub south of 42 is too narrow for the planner)
+mid_shaft: [26.0, 28.0, -1.5708]
+corridor_w: [18.0, 18.5, 0.0]
+room_south: [30.0, 13.0, 1.5708]
+room_east: [44.0, 14.0, 0.0]
+room_north: [51.0, 23.5, -1.5708]
+corridor_e: [67.0, 18.5, 0.0]
+nook_e: [77.0, 16.5, 1.5708]
+east_end: [88.5, 18.5, 3.1416]
+south_mid: [36.0, 4.0, 0.0]
+south_e: [70.0, 4.0, 0.0]

@@ -19,7 +19,9 @@ from mattbot_sim.fast import imports  # noqa: F401
 from mattbot_sim.kinematics import Pose2D, step, wrap_angle
 from navigation_utils import plan_start_heading
 from dds_utils.intents import Intent
-from navigation_utils.observation_policy import AT_GOAL, AT_START, DETOUR, OPPORTUNISTIC, REPLAN, check_etas, yields_to
+from navigation_utils.observation_policy import (
+    AT_GOAL, AT_START, DETOUR, OPPORTUNISTIC, REPLAN, RETURN, SCOUT, check_etas, yields_to,
+)
 from navigation_utils.trackers import HeadingController, PoseController
 
 OBSERVE_MODES = ("OBSERVE_TURN", "OBSERVE_DWELL")
@@ -67,6 +69,7 @@ class FastNavigator:
         self.intents_dirty = True
         self.intents_sent_at = -1e9
         self.detour = None
+        self.scout = None  # {"entry", "home", "returning", "round_trip"} while a scout runs (observe_scout_execute)
         self.observe_stop = None
         self.observe_queue = []
         self.observe_target = None
@@ -84,6 +87,17 @@ class FastNavigator:
     @property
     def pose(self):
         return self.robot.pose
+
+    @property
+    def activity(self):
+        """What the robot's driving is for (odometry): "detour", "scout", "return" (back from a scout),
+        "task" (its own goal) or "other"."""
+        if self.detour is not None:
+            return "detour"
+        scout = getattr(self, "scout", None)
+        if scout is not None:
+            return "return" if scout.get("returning") else "scout"
+        return "task" if self.goal is not None else "other"
 
     def log(self, text, *args):
         self.sim.nav_log(self.robot, NAV + (text % args if args else text))
@@ -120,10 +134,12 @@ class FastNavigator:
     def set_goal(self, x, y, theta):
         """/external_goal (goal_callback)."""
         goal = (float(x), float(y), float(theta))
-        if goal == self.goal:
+        if goal == self.goal and self.scout is None:
             if self.mode == "IDLE":
                 self.replan()
             return
+        if self.scout is not None:
+            self.cancel_scout("new goal")
         self.switch_mode("IDLE")
         if not self.sim.planner.grid().is_free((x, y)):
             self.log("invalid goal (%.2f, %.2f)", x, y)
@@ -134,6 +150,8 @@ class FastNavigator:
     def stop(self):
         """/stop."""
         self.cancel_detour("stop")
+        if self.scout is not None:
+            self.cancel_scout("stop")
         self.start_stop = self.goal_stop = None
         self.switch_mode("IDLE")
         self.goal = None
@@ -156,12 +174,16 @@ class FastNavigator:
             else:
                 self.switch_mode("IDLE")
             return
-        plan = planner.plan(start, (g[0], g[1]), grid, robots=robots, goal_snap_m=0.4 if self.detour else 0.0)
+        snap = 0.4 if self.detour is not None or self.scout_outbound() else 0.0  # viewpoints are coarse cells
+        plan = planner.plan(start, (g[0], g[1]), grid, robots=robots, goal_snap_m=snap)
         if plan is None:
             self.counters["plan_failures"] += 1
             if self.detour is not None:
                 self.abandon_detour("no path to the viewpoint")
                 return
+            if self.scout is not None:
+                self.log("Scout abandoned (no path)")
+                self.scout = None
             self.log("Planning failed; clearing the goal")
             self.goal = None
             self.switch_mode("IDLE")
@@ -207,8 +229,8 @@ class FastNavigator:
 
     def request_observation_stops(self):
         self.stops = []
-        if not self.p.observe or self.detour is not None:
-            return
+        if not self.p.observe or self.detour is not None or self.scout_outbound():
+            return  # no stops on the way to a viewpoint
         first_plan = self.goal != self.observe_goal
         if first_plan:
             self.observe_goal = self.goal
@@ -356,6 +378,9 @@ class FastNavigator:
                 self.load_remaining_plan(0)
             elif entry["stop"].kind == AT_GOAL:
                 self.finish_park_pose()
+            elif entry["stop"].kind == SCOUT:
+                self.log("Scout done")
+                self.end_scout()
             elif entry["stop"].resume == REPLAN:
                 self.detour = None
                 self.log("Detour done; replanning to the goal")
@@ -445,6 +470,50 @@ class FastNavigator:
         self.switch_mode("IDLE")
         self.replan()
 
+    # ---------- Scouts (observe_scout_execute; no robot counterpart yet, KNOWN_ISSUES 10.1) ----------
+
+    def scout_outbound(self):
+        return self.scout is not None and not self.scout["returning"]
+
+    def start_scout(self, option):
+        """Leave only to check objects (a scout decision with GO): drive to the viewpoint, look, then go back to
+        where the robot was (round trip) or stay. option: CheckPlanner.evaluate_scout()["option"]."""
+        from mattbot_sim.fast.checker import StopRequest
+
+        vx, vy = option["viewpoint"]
+        stop = StopRequest(SCOUT, RETURN, -1, vx, vy, option["heading"], list(option["object_ids"]),
+                           [tuple(t) for t in option["targets"]], option["cost_s"], option["to_view_s"])
+        entry = {"idx": 0, "t": 0.0, "stop": stop, "detour": False, "eta": self.sim.now + option["to_view_s"]}
+        self.scout = {"entry": entry, "home": (self.pose.x, self.pose.y, self.pose.theta), "returning": False,
+                      "round_trip": bool(option.get("round_trip", True))}
+        self.log("Scout to (%.2f, %.2f) to check %s (est. %.0f s)", vx, vy, "+".join(stop.object_ids), stop.cost_s)
+        self.goal = (float(vx), float(vy), float(option["heading"]))
+        self.switch_mode("IDLE")
+        self.replan()
+
+    def arrive_at_scout_viewpoint(self):
+        self.log("Reached scout viewpoint")
+        if not self.start_observation_stop(self.scout["entry"]):
+            self.log("Scout done (targets no longer due)")
+            self.end_scout()
+
+    def end_scout(self):
+        """After the look (or giving way): go back to where the scout started, or stay here."""
+        if self.scout["round_trip"]:
+            self.scout["returning"] = True
+            self.goal = self.scout["home"]
+            self.switch_mode("IDLE")
+            self.replan()
+        else:
+            self.scout = None
+            self.goal = None
+            self.switch_mode("IDLE")
+
+    def cancel_scout(self, reason):
+        if self.scout is not None:
+            self.log("Scout cancelled (%s)", reason)
+            self.scout = None
+
     def cancel_detour(self, reason):
         if self.detour is not None:
             self.log("Detour cancelled (%s)", reason)
@@ -495,6 +564,7 @@ class FastNavigator:
             if abs(wrap_angle(self.heading.th_g - self.pose.theta)) < self.p.theta_goal_thresh:
                 self.goal = None
                 self.park_goal = None
+                self.scout = None  # back from a scout (or parked at its viewpoint)
                 self.switch_mode("IDLE")
         self.move(dt)
         self.publish_intents()
@@ -546,6 +616,9 @@ class FastNavigator:
             out += [(self.observe_stop["stop"].kind, oid, now, True) for oid in ids]
         if self.start_stop is not None:
             out += [(AT_START, oid, now, False) for oid in self.start_stop["stop"].object_ids]
+        if self.scout_outbound() and self.mode not in OBSERVE_MODES:
+            eta = now + self.overhead_s() + max(self.duration - self.progress, 0.0)
+            out += [(SCOUT, oid, eta, True) for oid in self.scout["entry"]["stop"].object_ids]
         if self.detour is not None:
             if self.mode not in OBSERVE_MODES:
                 eta = now + self.overhead_s() + max(self.duration - self.progress, 0.0)
@@ -597,6 +670,22 @@ class FastNavigator:
     def check_detour_yields(self):
         if not self.p.observe_coordinate:
             return False
+        if self.scout_outbound():
+            # A scout gives way to any check not later than its own by more than the margin (no commit window)
+            stop = self.scout["entry"]["stop"]
+            eta = self.sim.now + max(self.duration - self.progress, 0.0)
+            winners = []
+            for oid in stop.object_ids:
+                w = yields_to(SCOUT, eta, self.robot.id, self.peer_intents(oid), self.p.observe_intent_margin_s)
+                if w is None:
+                    return False
+                winners.append((oid, w))
+            for oid, w in winners:
+                self.yielded[oid] = w.robot_id
+            self.log("Scout to check %s yielded to robot %s", "+".join(stop.object_ids),
+                     ",".join(sorted({str(w.robot_id) for _oid, w in winners})))
+            self.end_scout()
+            return True
         if self.detour is not None:
             remaining = max(self.duration - self.progress, 0.0)
             winners = self.detour_winners(self.detour["stop"], self.sim.now + remaining, committed=True,
@@ -621,6 +710,8 @@ class FastNavigator:
         if self.near_goal():
             if self.detour is not None:
                 self.arrive_at_detour_viewpoint()
+            elif self.scout_outbound():
+                self.arrive_at_scout_viewpoint()
             else:
                 self.enter_park_pose()
             return
@@ -645,6 +736,8 @@ class FastNavigator:
                 self.replan()
             elif self.detour is not None:
                 self.arrive_at_detour_viewpoint()
+            elif self.scout_outbound():
+                self.arrive_at_scout_viewpoint()
             else:
                 self.enter_park_pose()
 

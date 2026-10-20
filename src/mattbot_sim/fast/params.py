@@ -21,7 +21,8 @@ class FastParams:
     observe_detour_n_trips: float = 5.0
     observe_detour_margin_m: float = 0.0
     observe_detour_timeout_factor: float = 2.0
-    observe_scout: bool = False  # scout decisions while idle (decision only: nothing drives a scout)
+    observe_scout: bool = False  # scout decisions while idle
+    observe_scout_execute: bool = False  # fast sim only: drive the chosen scout (the robot only decides, 10.1)
     observe_max_scout_m: float = 30.0
     observe_scout_n_trips: float = 5.0
     observe_scout_margin_m: float = 0.0

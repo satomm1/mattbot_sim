@@ -307,6 +307,47 @@ After a change to the robot code:
 2. copy the new summaries into `fixtures/ros/`;
 3. if the tests then fail, fix the fast model, not the tolerances.
 
+## Experiments
+
+`scripts/experiment.py` compares re-checking strategies in the fast simulator. Every condition runs the same seeded
+instances, so results can be compared pair by pair on each seed. Each instance fixes:
+- the task list;
+- each obstacle's placement and when it appears and is removed.
+
+```bash
+python3 mattbot_sim/scripts/experiment.py generate mattbot_sim/experiments/pilot.yaml          # instance + review PNG
+python3 mattbot_sim/scripts/experiment.py run mattbot_sim/experiments/pilot.yaml --jobs 4 [--seeds 5] [--conditions none,detour]
+python3 mattbot_sim/scripts/experiment.py report results/exp_pilot_<time>                     # report.md + report.png
+python3 mattbot_sim/scripts/experiment.py replay results/exp_pilot_<time> --condition scout --seed 0 --gif run.gif
+```
+
+- **Spec** (`experiments/pilot.yaml`, format in `src/mattbot_sim/experiment/spec.py`):
+  - the map and landmarks (task destinations; `experiments/landmarks_current_map.yaml`) and the robots;
+  - the tasks (count, Poisson release rate, dwell) and the obstacles (count, minimum importance, width, classes, appear and lifetime ranges);
+  - `common` FastParams for every condition, then the `conditions`, each with its own FastParams on top;
+  - the seeds.
+- **Obstacles:**
+  - Candidates are points along the roadmap's corridor centre lines, at least `min_importance_m` of importance I_o over the landmark trips, and never within `clearance_m` of a landmark or a robot start. They are cached in `~/.ros/mattbot_experiments`.
+  - An instance's obstacles **together** never cut a landmark off, so every task stays possible even if every obstacle stays blocked.
+  - Robots learn about an obstacle by seeing it.
+  - Every landmark must be reachable by the planner; `generate` stops if one is not.
+- **Workload** (`experiment/orchestrator.py`): released tasks wait in a queue, and each goes to the nearest available robot. A robot out on a scout counts as available, and the task pre-empts the scout. The run ends when every task is done or has failed (`max_duration_s` caps it).
+- **Scouts drive** with `observe_scout_execute: true` (fast sim only). The robot drives to the viewpoint, looks, and goes back to where it started. It gives way to earlier checks while driving out, and a new task cancels it.
+- **Outputs:**
+  - `runs.csv`, one row per run:
+    - tasks done / failed, makespan;
+    - fleet distance, split into task / detour / scout / return (`dist_*_m`, from odometry);
+    - checks by kind, detours and scouts;
+    - obstacles known / dropped / censored, removal latency;
+    - ghost-blocked time (how long removed obstacles stayed in the ledger).
+  - `obstacles.csv`, one row per obstacle per run (appear, removed, known, dropped, latency, which check dropped it), and `tasks.csv`.
+  - `report.md` / `report.png`:
+    - mean [95 % bootstrap CI] per condition;
+    - paired distance differences to the first condition;
+    - removal latency with Kaplan-Meier for obstacles still in the ledger at the end.
+
+**Status:** the framework works end to end, but it is not yet ready for final results. A* is about 93 % of run time (about 2-4 s per long plan), so a pilot run takes about 17 min of wall time. See KNOWN_ISSUES part 12.
+
 ## Results
 
 `sim_monitor` compares `/object_beliefs` (the active ledger objects) and `/observation/results` with the ground truth

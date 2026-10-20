@@ -230,6 +230,12 @@ class CheckPlanner:
             if chosen:
                 for oid in ev.object_ids:
                     self.scout_chosen[oid] = ev.source
+                if "option" not in decision:  # the best chosen scout, for observe_scout_execute
+                    o = ev.option
+                    decision["option"] = {
+                        "object_ids": [c.object_id for c in o.candidates], "targets": [(c.x, c.y) for c in o.candidates],
+                        "viewpoint": (o.stop.x, o.stop.y), "heading": o.stop.heading, "cost_s": o.cost_s,
+                        "to_view_s": o.to_view_s, "round_trip": getattr(pol.scout_cost, "round_trip", True)}
             decision["candidates"].append({
                 "object_ids": list(ev.object_ids), "chosen": chosen, "blocked": ev.blocked, "value_m": ev.value_m, "cost_m": ev.cost_m,
                 "net_m": ev.net_m, "to_view_m": ev.source.to_view_m,

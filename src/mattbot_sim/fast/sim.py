@@ -109,6 +109,8 @@ class FastSim:
         self.frames = None  # a list -> viz.snapshot() every frame_every s (for --gif / --png)
         self.frame_every = 2.0
         self.next_frame = 0.0
+        self.done = False  # set by an orchestrator to end the run early (e.g. every task done)
+        self.removal_log = []  # (t, robot_id, check kind, class, x, y) of every ABSENT that removed a ledger object
 
     # ---------- Services for the navigator / orchestrator ----------
 
@@ -168,6 +170,7 @@ class FastSim:
                     self.confirm(robot, cls, x, y, w)
                 else:
                     self.ledger.remove_near(robot.id, self.now, cls, x, y, w)
+                    self.removal_log.append((self.now, robot.id, kind_name(kind), cls, x, y))
             if result is not None:
                 self.note(robot, robot.scorer.add_result(self.now, object_id, result["class_name"], result["outcome"],
                                                          result["reason"], window_start, window_end))
@@ -245,16 +248,26 @@ class FastSim:
             if line:
                 self.note(r, line)
             r.scout_idle = True
+            may_scout = getattr(self.orchestrator, "may_scout", None)
+            if (p.observe_scout_execute and decision.get("option") and r.nav.scout is None
+                    and (may_scout is None or may_scout(self, r))):
+                r.nav.start_scout(decision["option"])
 
     def step(self):
         self.apply_events()
         self.orchestrator.on_tick(self)
         for r in self.robots.values():
-            mode = r.nav.mode
+            mode, activity, x0, y0 = r.nav.mode, r.nav.activity, r.pose.x, r.pose.y
             r.nav.step(self.dt)
             if r.nav.mode == "IDLE" and mode != "IDLE":
                 r.idle_since = self.now
             r.turn_gate.update(r.nav.om, self.now)
+            # Odometry: distance driven by what the robot was doing, and time per navigator mode
+            c = r.nav.counters
+            d = math.hypot(r.pose.x - x0, r.pose.y - y0)
+            c["dist_total_m"] = c.get("dist_total_m", 0.0) + d
+            c["dist_%s_m" % activity] = c.get("dist_%s_m" % activity, 0.0) + d
+            c["t_%s_s" % mode] = c.get("t_%s_s" % mode, 0.0) + self.dt
         self.update_discs()
         if self.now + 1e-9 >= self.next_detect:
             self.detector_frames()
@@ -279,6 +292,8 @@ class FastSim:
         n = int(round(self.duration / self.dt)) if self.duration > 0 else 0
         for _ in range(n):
             self.step()
+            if self.done:
+                break
         self.every_second()
         self.wall_s = time.time() - t0  # wall clock: run_wall_s
         return self.summaries()

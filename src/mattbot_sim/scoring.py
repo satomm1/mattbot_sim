@@ -25,6 +25,17 @@ DETOUR_LOG = (
 )
 
 
+# Fast-sim navigator scout log lines (fast/navigator.py start_scout / arrive / end / yield / cancel)
+SCOUT_LOG = (
+    ("started", "Scout to ("),
+    ("reached", "Reached scout viewpoint"),
+    ("done", "Scout done"),
+    ("yielded", "Scout to check "),
+    ("cancelled", "Scout cancelled ("),
+    ("abandoned", "Scout abandoned ("),
+)
+
+
 def kind_name(kind):
     return KINDS[kind] if isinstance(kind, int) and 0 <= kind < len(KINDS) else str(kind)
 
@@ -68,6 +79,8 @@ class RunScorer:
     skips: List[str] = field(default_factory=list)  # "<object_id>: <reason>"
     detours_dropped: int = 0  # detours not started at the leave point (no target still due)
     detours_yielded: int = 0  # detours given up for another robot's earlier check (planned or under way)
+    # Executed scouts (fast sim observe_scout_execute), from the navigator log
+    scouts: Dict[str, int] = field(default_factory=lambda: {name: 0 for name, _ in SCOUT_LOG})
     runner: Dict[str, int] = field(default_factory=lambda: {"resend": 0, "give_up": 0})
     blockouts: List[dict] = field(default_factory=list)  # one per correct removal
     # Scout decisions (observation_planner /observation/scout; decision only, nothing drives a scout yet)
@@ -169,6 +182,10 @@ class RunScorer:
             oid, _sep, reason = rest.partition(" (")
             self.skips.append("%s: %s" % (oid, reason.rstrip(")")))
             return "navigator: " + text.strip()
+        for name, pattern in SCOUT_LOG:
+            if pattern in text and (name != "yielded" or "yielded to robot" in text):
+                self.scouts[name] += 1
+                return "navigator: " + text.strip()
         if "yielded to robot" in text and "Detour to check" in text:
             self.detours_yielded += 1
             return "navigator: " + text.strip()
@@ -314,6 +331,12 @@ class RunScorer:
             "detours_dropped": self.detours_dropped,
             "detours_yielded": self.detours_yielded,
             "scout_yielded": self.scout["yielded"],
+            "scouts_started": self.scouts["started"],
+            "scouts_reached": self.scouts["reached"],
+            "scouts_done": self.scouts["done"],
+            "scouts_yielded": self.scouts["yielded"],
+            "scouts_cancelled": self.scouts["cancelled"],
+            "scouts_abandoned": self.scouts["abandoned"],
             "goal_resends": self.runner["resend"],
             "goals_given_up": self.runner["give_up"],
             "wrong_observation_outcomes": sum(1 for r in self.results if r["verdict"] == "WRONG"),

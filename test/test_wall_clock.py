@@ -29,6 +29,7 @@ NODES = [
     "mattbot_navigation/scripts/observation_planner.py",
     "mattbot_navigation/scripts/occupancy_grid_mapper.py",
     "mattbot_navigation/src/navigation_utils/search.py",
+    "mattbot_navigation/src/navigation_utils/lattice_astar.py",
     "mattbot_navigation/src/navigation_utils/obstacle_importance.py",
     "mattbot_dds/scripts/observation_ledger.py",
     "mattbot_dds/scripts/object_belief_map.py",
