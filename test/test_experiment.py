@@ -245,3 +245,114 @@ def test_end_at_horizon_runs_the_full_duration(tmp_path):
         assert (sim.now >= 119.9) == horizon
         c = next(iter(sim.robots.values())).nav.counters
         assert c["time_task_s"] > 5.0 and c["time_task_s"] + c.get("time_other_s", 0.0) == pytest.approx(sim.now, abs=0.2)
+
+
+def test_scout_looks_only_from_its_viewpoint(tmp_path):
+    """near_goal is 0.35 m, but a viewpoint is only guaranteed within LOS_POSE_TOLERANCE_M: the navigator parks
+    on the viewpoint (observe_viewpoint_tol_m) before it looks."""
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    # scout_present with cone_9 taken away at once: it stays due, so the scout really looks (and finds it gone)
+    with open(os.path.join(PKG, "scenarios", "scout_present.yaml")) as f:
+        sc = yaml.safe_load(f)
+    sc["events"], sc["expect"] = [{"at": 1.0, "remove": "cone_9"}], {}
+    path = tmp_path / "scout_removed.yaml"
+    path.write_text(yaml.safe_dump(sc))
+    sim = FastSim(str(path), params=FastParams().update({"observe_scout": True, "observe_scout_execute": True}),
+                  seed=0, duration=200)
+    nav = next(iter(sim.robots.values())).nav
+    offsets, original = [], sim.observation_event
+
+    def record(robot, name, kind, object_id, target, *a, **k):
+        if name == "STARTED" and nav.scout is not None:
+            s = nav.scout["entry"]["stop"]
+            offsets.append(math.hypot(robot.pose.x - s.x, robot.pose.y - s.y))
+        return original(robot, name, kind, object_id, target, *a, **k)
+
+    sim.observation_event = record
+    sim.run()
+    assert offsets and max(offsets) <= sim.params.observe_viewpoint_tol_m + 0.06  # (park_pose_thresh 0.05)
+    assert next(iter(sim.summaries().values()))["observation_outcomes_by_kind"]["SCOUT"]["ABSENT"] == 1
+
+
+def test_evaluator_map_check_uses_the_planners_rule():
+    from mattbot_sim.fast.checker import Evaluator
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.perception import CameraModel
+    from observation_eval.evidence import CameraPose, Target
+
+    blocking = np.zeros((60, 100), dtype=bool)
+    blocking[30:, 40] = True  # wall from y = 3.0 up at x = 4.0..4.1 (0.1 m cells)
+    ev = Evaluator(FastParams(), CameraModel(), blocking, (0.0, 0.0), 0.1)
+    target = Target("chair", 5.0, 3.0, 1.0)
+    assert not ev.map_visible(CameraPose(2.05, 3.05, 0.0, 0.2), target)  # the corner hides most of it
+    assert ev.map_visible(CameraPose(2.05, 1.55, 0.0, 0.2), target)  # from lower down: in view
+    assert Evaluator(FastParams(), CameraModel()).map_visible(CameraPose(2.05, 3.05, 0.0, 0.2), target)  # no map
+
+
+class _FakeNav:
+    def __init__(self, can_plan):
+        self.mode, self.counters, self.can_plan, self.goal = "IDLE", {"plan_failures": 0}, can_plan, None
+
+    def stop(self):
+        pass
+
+
+class _FakeRobot:
+    def __init__(self, rid, x, can_plan):
+        self.id, self.nav, self.idle_since = rid, _FakeNav(can_plan), 0.0
+        self.pose = type("P", (), {"x": x, "y": 0.0})()
+
+
+class _FakeSim:
+    """Just enough of FastSim for TaskOrchestrator: robots that reach goals instantly or cannot plan."""
+
+    def __init__(self, robots):
+        self.robots = {r.id: r for r in robots}
+        self.now = self.elapsed = 0.0
+        self.done = False
+        self.events = []
+
+    def set_goal(self, rid, x, y, theta):
+        r = self.robots[rid]
+        if r.nav.can_plan:
+            r.pose.x, r.pose.y = x, y
+        else:
+            r.nav.counters["plan_failures"] += 1  # "Planning failed; clearing the goal"
+        r.idle_since = self.now
+
+    def runner_event(self, robot, text):
+        self.events.append((robot.id, text))
+
+    def tick(self, orch, seconds):
+        for _ in range(int(seconds * 10)):
+            orch.on_tick(self)
+            self.now = self.elapsed = self.now + 0.1
+
+
+def test_orchestrator_hands_a_stuck_robots_task_to_another():
+    from mattbot_sim.experiment.orchestrator import TaskOrchestrator
+
+    task = {"id": 0, "release_s": 0.0, "landmark": "a", "x": 10.0, "y": 0.0, "theta": 0.0}
+    # Robot 1 (nearest) cannot plan; robot 2 can: the task is handed over and done, robot 1 rests
+    sim = _FakeSim([_FakeRobot(1, 9.0, False), _FakeRobot(2, 0.0, True)])
+    orch = TaskOrchestrator([task], dwell_s=0.0, stuck_backoff_s=120.0)
+    orch.on_start(sim)
+    sim.tick(orch, 60)
+    t = orch.tasks[0]
+    assert t["status"] == "done" and t["robot"] == 2 and t["handoffs"] == 1 and orch.stuck_events == 1
+    assert not orch.available(sim, 1) and orch.state[1]["stuck_until"] > sim.now
+    # Nobody can plan: handed off max_handoffs times, then it fails
+    sim = _FakeSim([_FakeRobot(1, 9.0, False), _FakeRobot(2, 0.0, False)])
+    orch = TaskOrchestrator([dict(task)], dwell_s=0.0, stuck_backoff_s=5.0, max_handoffs=2)
+    orch.on_start(sim)
+    sim.tick(orch, 200)
+    assert orch.tasks[0]["status"] == "failed" and orch.tasks[0]["handoffs"] == 2
+    # A robot that plans but stops short (not stuck) fails the task as before
+    sim = _FakeSim([_FakeRobot(1, 9.0, True)])
+    sim.set_goal = lambda rid, x, y, th: setattr(sim.robots[rid], "idle_since", sim.now)  # never gets there
+    orch = TaskOrchestrator([dict(task)], dwell_s=0.0)
+    orch.on_start(sim)
+    sim.tick(orch, 60)
+    assert orch.tasks[0]["status"] == "failed" and orch.tasks[0]["handoffs"] == 0

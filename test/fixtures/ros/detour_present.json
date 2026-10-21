@@ -1,6 +1,6 @@
 {
  "scenario": "detour_present",
- "source": "ROS sim (sim.launch / run_fleet.py), 2026-10-07",
+ "source": "ROS sim (sim.launch observe_detour:=true speed:=2), 2026-10-21",
  "summaries": [
   {
    "true_objects": [
@@ -34,6 +34,21 @@
      "STARTED": 3,
      "ENDED": 3,
      "ABORTED": 0
+    },
+    "SCOUT": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_START": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_GOAL": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
     }
    },
    "observation_outcomes_by_kind": {
@@ -44,6 +59,21 @@
     },
     "DETOUR": {
      "PRESENT": 3,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "SCOUT": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_START": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_GOAL": {
+     "PRESENT": 0,
      "ABSENT": 0,
      "INCONCLUSIVE": 0
     }
@@ -61,13 +91,13 @@
    "blockouts_still_present": [],
    "blockout_clear_after_s": [],
    "scenario": "detour_present",
-   "run_s": 620.4,
-   "run_wall_s": 621.3,
+   "run_s": 629.6,
+   "run_wall_s": 314.6,
    "loop_rates": {
     "navigator": {
      "nominal_hz": 10.0,
-     "mean_hz": 10.02,
-     "min_window_hz": 9.9
+     "mean_hz": 9.99,
+     "min_window_hz": 9.6
     },
     "detector": {
      "nominal_hz": 5.0,

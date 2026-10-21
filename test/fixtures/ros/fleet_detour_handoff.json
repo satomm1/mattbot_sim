@@ -1,6 +1,6 @@
 {
  "scenario": "fleet_detour_handoff",
- "source": "ROS sim (sim.launch / run_fleet.py), 2026-10-07",
+ "source": "ROS sim (run_fleet.py --speed 2), 2026-10-21",
  "summaries": [
   {
    "true_objects": [
@@ -12,8 +12,8 @@
    "correct_removals": 1,
    "false_removals": 0,
    "removal_latency_s": {
-    "mean": 77.73992586135864,
-    "max": 77.73992586135864
+    "mean": 84.41991949081421,
+    "max": 84.41991949081421
    },
    "stale_ledger_objects": [],
    "observation_stops": {
@@ -36,6 +36,21 @@
      "STARTED": 0,
      "ENDED": 0,
      "ABORTED": 0
+    },
+    "SCOUT": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_START": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_GOAL": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
     }
    },
    "observation_outcomes_by_kind": {
@@ -45,6 +60,21 @@
      "INCONCLUSIVE": 0
     },
     "DETOUR": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "SCOUT": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_START": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_GOAL": {
      "PRESENT": 0,
      "ABSENT": 0,
      "INCONCLUSIVE": 0
@@ -66,18 +96,18 @@
    ],
    "scenario": "fleet_detour_handoff",
    "robot_id": 91,
-   "run_s": 654.3,
-   "run_wall_s": 651.2,
+   "run_s": 649.5,
+   "run_wall_s": 321.1,
    "loop_rates": {
     "navigator": {
      "nominal_hz": 10.0,
-     "mean_hz": 10.0,
-     "min_window_hz": 10.0
+     "mean_hz": 9.98,
+     "min_window_hz": 9.6
     },
     "detector": {
      "nominal_hz": 5.0,
      "mean_hz": 5.0,
-     "min_window_hz": 4.9
+     "min_window_hz": 5.0
     }
    },
    "loop_rates_ok": true,
@@ -151,8 +181,8 @@
    "correct_removals": 1,
    "false_removals": 0,
    "removal_latency_s": {
-    "mean": 77.9799256324768,
-    "max": 77.9799256324768
+    "mean": 84.05991983413696,
+    "max": 84.05991983413696
    },
    "stale_ledger_objects": [],
    "observation_stops": {
@@ -175,6 +205,21 @@
      "STARTED": 2,
      "ENDED": 2,
      "ABORTED": 0
+    },
+    "SCOUT": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_START": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_GOAL": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
     }
    },
    "observation_outcomes_by_kind": {
@@ -186,6 +231,21 @@
     "DETOUR": {
      "PRESENT": 1,
      "ABSENT": 1,
+     "INCONCLUSIVE": 0
+    },
+    "SCOUT": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_START": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_GOAL": {
+     "PRESENT": 0,
+     "ABSENT": 0,
      "INCONCLUSIVE": 0
     }
    },
@@ -201,22 +261,22 @@
    "wrong_observation_outcomes": 0,
    "blockouts_still_present": [],
    "blockout_clear_after_s": [
-    0.019999980926513672
+    0.0
    ],
    "scenario": "fleet_detour_handoff",
    "robot_id": 92,
-   "run_s": 654.5,
-   "run_wall_s": 650.9,
+   "run_s": 651.2,
+   "run_wall_s": 320.9,
    "loop_rates": {
     "navigator": {
      "nominal_hz": 10.0,
-     "mean_hz": 10.01,
-     "min_window_hz": 9.9
+     "mean_hz": 9.98,
+     "min_window_hz": 9.5
     },
     "detector": {
      "nominal_hz": 5.0,
      "mean_hz": 5.0,
-     "min_window_hz": 5.0
+     "min_window_hz": 4.8
     }
    },
    "loop_rates_ok": true,

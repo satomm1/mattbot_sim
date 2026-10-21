@@ -25,6 +25,7 @@ from navigation_utils.observation_policy import (
 from navigation_utils.trackers import HeadingController, PoseController
 
 OBSERVE_MODES = ("OBSERVE_TURN", "OBSERVE_DWELL")
+VIEWPOINT_APPROACH_TIMEOUT_S = 15.0  # give up parking on a viewpoint and look from where the robot is
 ENDPOINT_KINDS = (AT_START, AT_GOAL)
 NAV = "[Navigator] "
 
@@ -56,6 +57,8 @@ class FastNavigator:
         self.t_plan = 0.0  # plan clock (s since TRACK started)
         self.duration = 0.0
         self.park_goal = None
+        self.viewpoint_approach = None  # sim time a PARK_POSE to a detour / scout viewpoint started
+        self.approach_due = set()  # the targets due when that approach started
         self.th_init = 0.0
         self.aligned_since = None
         self.stops = []  # pending observation stops of this trajectory
@@ -103,6 +106,8 @@ class FastNavigator:
         self.sim.nav_log(self.robot, NAV + (text % args if args else text))
 
     def switch_mode(self, new_mode):
+        if new_mode != "PARK_POSE" and self.mode == "PARK_POSE" and new_mode not in OBSERVE_MODES:
+            self.viewpoint_approach = None  # a viewpoint approach ends with the look (OBSERVE_*) or not at all
         if self.mode in OBSERVE_MODES and new_mode not in OBSERVE_MODES and not self.resuming:
             self.abort_observation()
         if self.mode == "ALIGN" and new_mode != "ALIGN":
@@ -299,13 +304,20 @@ class FastNavigator:
             self.stops.pop(0)
         return False
 
-    def start_observation_stop(self, entry=None):
-        """False if every target was already checked for this goal (nothing started)."""
+    def due_targets(self, entry):
+        """Targets of a stop not yet checked for this goal that still pass the rules (revalidation)."""
+        s = entry["stop"]
+        ids = [oid for oid in s.object_ids if oid not in self.observed_this_goal]
+        return set(self.revalidate(entry, ids, self.p.observe_dwell_s * len(ids))) if ids else set()
+
+    def start_observation_stop(self, entry=None, due=None):
+        """False if every target was already checked for this goal (nothing started). due: the targets still due,
+        decided before (at a viewpoint, before parking on it), so they are not revalidated again."""
         entry = entry if entry is not None else self.stops.pop(0)
         s = entry["stop"]
         queue = [(oid, t) for oid, t in zip(s.object_ids, s.targets) if oid not in self.observed_this_goal]
         if queue:
-            due = self.revalidate(entry, [q[0] for q in queue], self.p.observe_dwell_s * len(queue))
+            due = self.due_targets(entry) if due is None else due
             queue = [q for q in queue if q[0] in due]
         if not queue:
             return False
@@ -430,6 +442,7 @@ class FastNavigator:
         return due
 
     def start_detour(self):
+        self.viewpoint_approach = None
         entry = self.stops[0]
         winners = self.detour_winners(entry["stop"], self.entry_eta(entry))
         if winners:
@@ -452,9 +465,40 @@ class FastNavigator:
         self.switch_mode("IDLE")
         self.replan()
 
+    def approach_viewpoint(self, x, y, heading):
+        """localize_and_navigate._approach_viewpoint: near_goal is 0.35 m, but the observation planner only
+        guarantees the view within LOS_POSE_TOLERANCE_M (0.1 m) of a viewpoint (a wall corner can hide the
+        object 0.2 m from it), so park on the viewpoint first. False if already close or it is not free."""
+        if math.hypot(self.pose.x - x, self.pose.y - y) <= self.p.observe_viewpoint_tol_m:
+            return False
+        if not self.sim.planner.grid(self.robot.mapper.object_layer(),
+                                     (self.robot.id, self.robot.mapper.version)).is_free((x, y)):
+            return False
+        self.viewpoint_approach = self.sim.now
+        self.park_goal = (float(x), float(y), float(heading))
+        self.park.load_goal(*self.park_goal)
+        self.switch_mode("PARK_POSE")
+        return True
+
+    def viewpoint_due(self, entry, x, y, heading):
+        """At a detour / scout viewpoint (near_goal): the targets still due, decided now (before parking on the
+        viewpoint, so a re-sighting while parking does not cancel the look), or None while parking."""
+        if self.viewpoint_approach is not None:
+            self.viewpoint_approach = None
+            return self.approach_due  # parked (or timed out): look from here
+        due = self.due_targets(entry)
+        if due and self.approach_viewpoint(x, y, heading):
+            self.approach_due = due
+            return None
+        return due
+
     def arrive_at_detour_viewpoint(self):
+        s = self.detour["stop"]
+        due = self.viewpoint_due(self.detour["entry"], s.x, s.y, self.detour["heading"])
+        if due is None:
+            return
         self.log("Reached detour viewpoint")
-        if not self.start_observation_stop(self.detour["entry"]):
+        if not self.start_observation_stop(self.detour["entry"], due):
             self.log("Detour done; replanning to the goal (targets already checked)")
             self.detour = None
             self.switch_mode("IDLE")
@@ -480,6 +524,7 @@ class FastNavigator:
         where the robot was (round trip) or stay. option: CheckPlanner.evaluate_scout()["option"]."""
         from mattbot_sim.fast.checker import StopRequest
 
+        self.viewpoint_approach = None
         vx, vy = option["viewpoint"]
         stop = StopRequest(SCOUT, RETURN, -1, vx, vy, option["heading"], list(option["object_ids"]),
                            [tuple(t) for t in option["targets"]], option["cost_s"], option["to_view_s"])
@@ -492,8 +537,12 @@ class FastNavigator:
         self.replan()
 
     def arrive_at_scout_viewpoint(self):
+        s = self.scout["entry"]["stop"]
+        due = self.viewpoint_due(self.scout["entry"], s.x, s.y, s.heading)
+        if due is None:
+            return
         self.log("Reached scout viewpoint")
-        if not self.start_observation_stop(self.scout["entry"]):
+        if not self.start_observation_stop(self.scout["entry"], due):
             self.log("Scout done (targets no longer due)")
             self.end_scout()
 
@@ -557,7 +606,15 @@ class FastNavigator:
             self.observe_step()
         elif self.mode == "PARK_POSE":
             gx, gy, _ = self.park_goal
-            if math.hypot(self.pose.x - gx, self.pose.y - gy) < self.p.park_pose_thresh:
+            parked = math.hypot(self.pose.x - gx, self.pose.y - gy) < self.p.park_pose_thresh
+            if self.viewpoint_approach is not None and (self.detour is not None or self.scout_outbound()):
+                if parked or now - self.viewpoint_approach > VIEWPOINT_APPROACH_TIMEOUT_S:
+                    if self.detour is not None:
+                        self.arrive_at_detour_viewpoint()
+                    else:
+                        self.arrive_at_scout_viewpoint()
+            elif parked:
+                self.viewpoint_approach = None
                 if not self.start_goal_check():
                     self.finish_park_pose()
         elif self.mode == "PARK_HEADING":

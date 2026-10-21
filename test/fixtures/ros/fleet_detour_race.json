@@ -1,62 +1,62 @@
 {
  "scenario": "fleet_detour_race",
- "source": "ROS sim (run_fleet.py), 2026-10-19",
+ "source": "ROS sim (run_fleet.py --speed 2), 2026-10-21",
  "summaries": [
   {
    "blockout_clear_after_s": [],
    "blockouts_still_present": [],
    "correct_removals": 0,
    "detour_abandon_reasons": [],
-   "detour_stops": 1,
+   "detour_stops": 0,
    "detours_abandoned": 0,
    "detours_cancelled": 0,
-   "detours_done": 1,
+   "detours_done": 0,
    "detours_dropped": 0,
    "detours_reached": 1,
    "detours_started": 1,
    "detours_yielded": 0,
    "expectations": [
     {
-     "actual": 1,
-     "expected": 1.0,
      "key": "ledger_objects_added",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "false_removals",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "goal_resends",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 1,
+     "op": "==",
      "expected": 1.0,
-     "key": "detours_started",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "detours_yielded",
-     "ok": true,
-     "op": "=="
-    },
-    {
      "actual": 1,
-     "expected": 1,
+     "ok": true
+    },
+    {
+     "key": "false_removals",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "goal_resends",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "detours_started",
+     "op": "==",
+     "expected": 1.0,
+     "actual": 1,
+     "ok": true
+    },
+    {
+     "key": "detours_yielded",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
      "key": "loop_rates_ok",
-     "ok": true,
-     "op": "=="
+     "op": "==",
+     "expected": 1,
+     "actual": 1,
+     "ok": true
     }
    ],
    "expectations_passed": true,
@@ -65,86 +65,86 @@
    "goals_given_up": 0,
    "ledger_objects_added": 1,
    "loop_rates": {
-    "detector": {
-     "mean_hz": 5.0,
-     "min_window_hz": 5.0,
-     "nominal_hz": 5.0
-    },
     "navigator": {
-     "mean_hz": 10.03,
-     "min_window_hz": 9.9,
-     "nominal_hz": 10.0
+     "nominal_hz": 10.0,
+     "mean_hz": 9.9,
+     "min_window_hz": 9.5
+    },
+    "detector": {
+     "nominal_hz": 5.0,
+     "mean_hz": 5.0,
+     "min_window_hz": 4.9
     }
    },
    "loop_rates_ok": true,
    "observation_outcomes": {
+    "PRESENT": 0,
     "ABSENT": 0,
-    "INCONCLUSIVE": 0,
-    "PRESENT": 1
+    "INCONCLUSIVE": 0
    },
    "observation_outcomes_by_kind": {
-    "AT_GOAL": {
+    "OPPORTUNISTIC": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
-    },
-    "AT_START": {
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
     },
     "DETOUR": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 1
-    },
-    "OPPORTUNISTIC": {
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
     },
     "SCOUT": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
+    },
+    "AT_START": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_GOAL": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
     }
    },
    "observation_stops": {
-    "ABORTED": 0,
-    "ENDED": 1,
-    "STARTED": 1
+    "STARTED": 1,
+    "ENDED": 0,
+    "ABORTED": 0
    },
    "observation_stops_by_kind": {
-    "AT_GOAL": {
-     "ABORTED": 0,
+    "OPPORTUNISTIC": {
+     "STARTED": 0,
      "ENDED": 0,
-     "STARTED": 0
-    },
-    "AT_START": {
-     "ABORTED": 0,
-     "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
     },
     "DETOUR": {
-     "ABORTED": 0,
-     "ENDED": 1,
-     "STARTED": 1
-    },
-    "OPPORTUNISTIC": {
-     "ABORTED": 0,
+     "STARTED": 1,
      "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
     },
     "SCOUT": {
-     "ABORTED": 0,
+     "STARTED": 0,
      "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
+    },
+    "AT_START": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_GOAL": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
     }
    },
    "removal_latency_s": null,
    "robot_id": 91,
-   "run_s": 120.4,
-   "run_wall_s": 116.3,
+   "run_s": 115.5,
+   "run_wall_s": 53.1,
    "scenario": "fleet_detour_race",
    "scout_best_net_m_by_object": {},
    "scout_decisions": 0,
@@ -180,46 +180,46 @@
    "detours_yielded": 1,
    "expectations": [
     {
-     "actual": 1,
-     "expected": 1.0,
      "key": "ledger_objects_added",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "false_removals",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "goal_resends",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 0,
-     "expected": 0.0,
-     "key": "detours_started",
-     "ok": true,
-     "op": "=="
-    },
-    {
-     "actual": 1,
+     "op": "==",
      "expected": 1.0,
-     "key": "min_detours_yielded",
-     "ok": true,
-     "op": ">="
+     "actual": 1,
+     "ok": true
     },
     {
+     "key": "false_removals",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "goal_resends",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "detours_started",
+     "op": "==",
+     "expected": 0.0,
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "key": "min_detours_yielded",
+     "op": ">=",
+     "expected": 1.0,
      "actual": 1,
-     "expected": 1,
+     "ok": true
+    },
+    {
      "key": "loop_rates_ok",
-     "ok": true,
-     "op": "=="
+     "op": "==",
+     "expected": 1,
+     "actual": 1,
+     "ok": true
     }
    ],
    "expectations_passed": true,
@@ -228,86 +228,86 @@
    "goals_given_up": 0,
    "ledger_objects_added": 1,
    "loop_rates": {
-    "detector": {
-     "mean_hz": 5.0,
-     "min_window_hz": 5.0,
-     "nominal_hz": 5.0
-    },
     "navigator": {
-     "mean_hz": 10.0,
-     "min_window_hz": 9.9,
-     "nominal_hz": 10.0
+     "nominal_hz": 10.0,
+     "mean_hz": 9.82,
+     "min_window_hz": 9.3
+    },
+    "detector": {
+     "nominal_hz": 5.0,
+     "mean_hz": 5.0,
+     "min_window_hz": 5.0
     }
    },
    "loop_rates_ok": true,
    "observation_outcomes": {
+    "PRESENT": 0,
     "ABSENT": 0,
-    "INCONCLUSIVE": 0,
-    "PRESENT": 0
+    "INCONCLUSIVE": 0
    },
    "observation_outcomes_by_kind": {
-    "AT_GOAL": {
+    "OPPORTUNISTIC": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
-    },
-    "AT_START": {
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
     },
     "DETOUR": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
-    },
-    "OPPORTUNISTIC": {
-     "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
     },
     "SCOUT": {
+     "PRESENT": 0,
      "ABSENT": 0,
-     "INCONCLUSIVE": 0,
-     "PRESENT": 0
+     "INCONCLUSIVE": 0
+    },
+    "AT_START": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
+    },
+    "AT_GOAL": {
+     "PRESENT": 0,
+     "ABSENT": 0,
+     "INCONCLUSIVE": 0
     }
    },
    "observation_stops": {
-    "ABORTED": 0,
+    "STARTED": 0,
     "ENDED": 0,
-    "STARTED": 0
+    "ABORTED": 0
    },
    "observation_stops_by_kind": {
-    "AT_GOAL": {
-     "ABORTED": 0,
+    "OPPORTUNISTIC": {
+     "STARTED": 0,
      "ENDED": 0,
-     "STARTED": 0
-    },
-    "AT_START": {
-     "ABORTED": 0,
-     "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
     },
     "DETOUR": {
-     "ABORTED": 0,
+     "STARTED": 0,
      "ENDED": 0,
-     "STARTED": 0
-    },
-    "OPPORTUNISTIC": {
-     "ABORTED": 0,
-     "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
     },
     "SCOUT": {
-     "ABORTED": 0,
+     "STARTED": 0,
      "ENDED": 0,
-     "STARTED": 0
+     "ABORTED": 0
+    },
+    "AT_START": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
+    },
+    "AT_GOAL": {
+     "STARTED": 0,
+     "ENDED": 0,
+     "ABORTED": 0
     }
    },
    "removal_latency_s": null,
    "robot_id": 92,
-   "run_s": 119.7,
-   "run_wall_s": 115.8,
+   "run_s": 115.0,
+   "run_wall_s": 53.9,
    "scenario": "fleet_detour_race",
    "scout_best_net_m_by_object": {},
    "scout_decisions": 0,

@@ -91,7 +91,9 @@ class FastSim:
             r = Robot(rid, sc, Pose2D(sc.start.x, sc.start.y, sc.start.theta),
                       Mapper(grid.occupancy.shape, (grid.origin_x, grid.origin_y), grid.resolution,
                              p.mapper_confirm_count, p.mapper_miss_limit, p.mapper_ttl_s, p.mapper_max_blockout_m),
-                      CheckPlanner(self.core), Evaluator(p, self.camera), RunScorer())
+                      CheckPlanner(self.core),
+                      Evaluator(p, self.camera, self.core.blocking, self.core.origin, self.core.grid.resolution),
+                      RunScorer())
             r.nav = FastNavigator(r, self)
             self.robots[rid] = r
         self.update_discs()

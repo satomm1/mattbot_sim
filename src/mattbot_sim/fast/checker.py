@@ -20,7 +20,8 @@ from mattbot_sim.fast import imports  # noqa: F401
 from navigation_utils.observation_policy import (
     DETOUR, SCOUT_COST_MODELS, Candidate, DetourValueParams, ScoutValueParams, ThresholdPolicy, covered_ids,
 )
-from navigation_utils.viewpoints import blocking_mask, compute_viewshed, nearby_blockers
+from navigation_utils.viewpoints import LOS_MIN_CLEAR, blocking_mask, compute_viewshed, nearby_blockers, \
+    width_line_of_sight_counts
 from observation_eval.evidence import (
     OUTCOME_ABSENT, OUTCOME_PRESENT, CameraPose, Detection, EvalParams, Intrinsics, Target, frame_verdict,
     match_known, window_outcome,
@@ -258,10 +259,12 @@ class Window:
 
 
 class Evaluator:
-    """One robot's observation evaluator (use_depth off)."""
+    """One robot's observation evaluator (use_depth off). blocking / origin / resolution: the static map, for
+    observation_evaluator's map-occlusion check (None: no check)."""
 
-    def __init__(self, params, camera):
+    def __init__(self, params, camera, blocking=None, origin=(0.0, 0.0), resolution=0.05):
         self.params = EvalParams(use_depth=False, min_absent_frames=int(params.observe_min_absent_frames))
+        self.blocking, self.origin, self.resolution = blocking, origin, resolution
         self.intrinsics = Intrinsics(camera.fx, camera.fy, camera.cx, camera.cy, camera.width, camera.height)
         self.resight_min_interval_s = params.resight_min_interval_s
         self.windows: Dict[str, Window] = {}
@@ -288,11 +291,20 @@ class Evaluator:
         for target_id, w in self.windows.items():
             others = {oid: o for oid, o in objects.items() if oid != target_id}
             w.frames.append(frame_verdict(dets, w.target, cam, self.intrinsics, w.params, localization_ok=True,
-                                          known_blockers=[(x, y, wd) for _c, x, y, wd in others.values()]))
+                                          known_blockers=[(x, y, wd) for _c, x, y, wd in others.values()],
+                                          map_visible=self.map_visible(cam, w.target)))
             for oid, matches in match_known(dets, others, w.params).items():
                 entry = w.others.setdefault(oid, [[], 0])
                 entry[0].extend(matches)
                 entry[1] += 1
+
+    def map_visible(self, cam, target):
+        """observation_evaluator.map_visible: False if the static map hides most of the target from the camera."""
+        if self.blocking is None:
+            return True
+        clear = width_line_of_sight_counts(self.blocking, self.origin, self.resolution, np.array([cam.x]),
+                                           np.array([cam.y]), target.x, target.y, target.width / 2.0)[0]
+        return int(clear) >= LOS_MIN_CLEAR
 
     def end(self, object_id, now, beliefs):
         """ENDED: returns (result dict, actions) with actions [("confirm"|"remove", class, x, y, width)]."""

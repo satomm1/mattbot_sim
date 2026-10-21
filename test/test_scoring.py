@@ -86,8 +86,12 @@ def test_shipped_scenarios_load(name):
     ids = {o.object_id for o in sc.objects}
     assert {e.get("remove") or e.get("move") for e in sc.events} <= ids
     assert set(sc.known_from_peer) <= ids and set(sc.detour) <= ids
-    # Every expectation names a real summary field (values do not matter here)
-    checks = check_expectations(RunScorer().summary(0.0), sc.expect)
+    # Every expectation names a real summary field (values do not matter here). With the scenario's objects as
+    # ground truth, so per-object fields (e.g. scout_go_by_object.<id>) exist as in a run.
+    scorer = RunScorer()
+    scorer.set_ground_truth([{"object_id": o.object_id, "class_name": o.class_name, "x": o.x, "y": o.y,
+                              "width": o.width, "t_start": 0.0, "t_end": None} for o in sc.objects])
+    checks = check_expectations(scorer.summary(0.0), sc.expect)
     assert not [c for c in checks if c.get("error")]
 
 

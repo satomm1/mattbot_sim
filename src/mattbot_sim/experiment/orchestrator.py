@@ -7,6 +7,11 @@ robot is IDLE for idle_settle_s, at least 3 s after the goal was sent, within re
 (the PatrolOrchestrator rule); a robot that went IDLE short of it gets the goal again, up to max_retries, and a
 task that takes longer than task_timeout_s or runs out of retries fails. The run ends (sim.done) when every task
 is done or failed, or, with end_at_horizon, only at the simulator's duration (tasks still open are unfinished).
+
+A robot that runs out of retries because it cannot plan (its plan failures grew during the task, e.g. ledger
+blockouts closed it into a pocket after a detour) is stuck, not the task: the task goes back to the front of the
+queue for another robot (up to max_handoffs times, then it fails) and the stuck robot gets no task for
+stuck_backoff_s.
 """
 
 import math
@@ -16,9 +21,13 @@ from mattbot_sim.fast.orchestrator import Orchestrator
 
 class TaskOrchestrator(Orchestrator):
     def __init__(self, tasks, dwell_s=5.0, reach_tol_m=0.5, idle_settle_s=1.5, max_retries=3, task_timeout_s=900.0,
-                 end_at_horizon=False):
+                 end_at_horizon=False, stuck_backoff_s=120.0, max_handoffs=3):
         self.end_at_horizon = bool(end_at_horizon)
-        self.tasks = [dict(t, status="waiting", robot=None, assigned_s=None, done_s=None, retries=0) for t in tasks]
+        self.stuck_backoff_s = float(stuck_backoff_s)
+        self.max_handoffs = int(max_handoffs)
+        self.stuck_events = 0  # times a robot was found stuck (its task handed to another robot)
+        self.tasks = [dict(t, status="waiting", robot=None, assigned_s=None, done_s=None, retries=0, handoffs=0)
+                      for t in tasks]
         self.dwell_s = float(dwell_s)
         self.reach_tol_m = reach_tol_m
         self.idle_settle_s = idle_settle_s
@@ -28,7 +37,8 @@ class TaskOrchestrator(Orchestrator):
     def on_start(self, sim):
         self.pending = []  # released, not yet assigned (FIFO)
         self.next_release = 0
-        self.state = {rid: {"task": None, "sent_at": None, "free_at": 0.0} for rid in sim.robots}
+        self.state = {rid: {"task": None, "sent_at": None, "free_at": 0.0, "stuck_until": 0.0, "failures_at": 0}
+                      for rid in sim.robots}
 
     # ---------- Helpers ----------
 
@@ -48,7 +58,17 @@ class TaskOrchestrator(Orchestrator):
 
     def available(self, sim, rid):
         st = self.state[rid]
-        return st["task"] is None and sim.now >= st["free_at"]
+        return st["task"] is None and sim.now >= st["free_at"] and sim.now >= st["stuck_until"]
+
+    def _hand_off(self, sim, rid, task):
+        """The robot cannot plan: put its task back at the front of the queue and rest the robot."""
+        st = self.state[rid]
+        st["task"] = None
+        st["stuck_until"] = sim.now + self.stuck_backoff_s
+        self.stuck_events += 1
+        task.update(status="released", robot=None, assigned_s=None, retries=0, handoffs=task["handoffs"] + 1)
+        self.pending.insert(0, task)
+        sim.runner_event(sim.robots[rid], "robot cannot plan: task %d handed to another robot" % task["id"])
 
     def may_scout(self, sim, robot):
         """FastSim.scout_tick asks before executing a scout: only with no task waiting and none of its own."""
@@ -83,6 +103,9 @@ class TaskOrchestrator(Orchestrator):
                 sim.runner_event(r, "resend goal %d %.1f m short" % (task["id"], math.hypot(
                     r.pose.x - task["x"], r.pose.y - task["y"])))
                 self._send(sim, rid, task)
+            elif (r.nav.counters.get("plan_failures", 0) > st["failures_at"]
+                  and task["handoffs"] < self.max_handoffs):
+                self._hand_off(sim, rid, task)
             else:
                 self._finish(sim, rid, task, "failed")
 
@@ -95,6 +118,7 @@ class TaskOrchestrator(Orchestrator):
                                                       sim.robots[i].pose.y - task["y"]), i))
             task.update(status="assigned", robot=rid, assigned_s=round(sim.now, 2))
             self.state[rid]["task"] = task
+            self.state[rid]["failures_at"] = sim.robots[rid].nav.counters.get("plan_failures", 0)
             self._send(sim, rid, task)
 
         if not self.end_at_horizon and self.next_release >= len(self.tasks) and not self.pending and all(

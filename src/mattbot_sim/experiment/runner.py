@@ -95,6 +95,7 @@ def run_row(sim, orchestrator, obstacles, condition, seed, wall_s):
     row = OrderedDict(condition=condition, seed=seed, run_s=round(sim.now, 1), wall_s=round(wall_s, 1),
                       tasks=len(tasks), tasks_done=len(done), tasks_failed=sum(t["status"] == "failed" for t in tasks),
                       tasks_unfinished=sum(t["status"] not in ("done", "failed") for t in tasks),
+                      robot_stuck_events=getattr(orchestrator, "stuck_events", 0),
                       makespan_s=max((t["done_s"] for t in done), default=None),
                       mean_task_s=round(sum(t["done_s"] - t["release_s"] for t in done) / len(done), 1) if done else None)
     dist = OrderedDict()
@@ -157,7 +158,7 @@ def run_one(job):
     row = run_row(sim, orch, obstacles, condition, seed, time.time() - t0)  # wall clock: run time
     tasks = [OrderedDict(condition=condition, seed=seed, task=t["id"], landmark=t["landmark"], release_s=t["release_s"],
                          assigned_s=t["assigned_s"], done_s=t["done_s"], status=t["status"], robot=t["robot"],
-                         retries=t["retries"]) for t in orch.tasks]
+                         retries=t["retries"], handoffs=t.get("handoffs", 0)) for t in orch.tasks]
     for o in obstacles:
         o["condition"], o["seed"] = condition, seed
     return row, obstacles, tasks

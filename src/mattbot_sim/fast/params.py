@@ -54,6 +54,7 @@ class FastParams:
     theta_start_thresh: float = 0.05  # navigator aligned()
     theta_goal_thresh: float = 0.05
     park_pose_thresh: float = 0.05
+    observe_viewpoint_tol_m: float = 0.1  # navigator: closer than this to a detour / scout viewpoint before looking
     post_align_pause_s: float = 1.0
     robot_clearance: float = 0.4  # navigation launch robot_clearance -> robot_d = 0.8 for A*
     path_check_tolerance_m: float = 0.1
