@@ -253,7 +253,9 @@ class FastNavigator:
         stops = self.robot.planner.select(path_xy, self.sim.beliefs(), self.sim.now,
                                           exclude=self.observed_this_goal | self.detour_skipped | self.live_yielded(),
                                           start_pose=start_pose, goal_theta=self.goal[2], times=req_times,
-                                          peer_intents=self.sim.peer_intents(self.robot), robot_id=self.robot.id)
+                                          peer_intents=self.sim.peer_intents(self.robot), robot_id=self.robot.id,
+                                          object_layer=self.robot.mapper.object_layer(),
+                                          layer_key=self.robot.mapper.version)
         have_detour = False
         endpoints = []
         for s in stops:
@@ -463,7 +465,13 @@ class FastNavigator:
                        "displaced": displaced}
         self.log("Detour to (%.2f, %.2f) to check %s (est. %.0f s)", s.x, s.y, "+".join(s.object_ids), s.cost_s)
         self.switch_mode("IDLE")
+        plan = self.plan
         self.replan()
+        if self.detour is not None and self.plan is not plan:
+            # localize_and_navigate._start_detour: the deadline also covers the planned drive to the viewpoint
+            needed = self.duration + self.p.post_align_pause_s + self.p.observe_dwell_s * len(s.object_ids)
+            self.detour["deadline"] = max(self.detour["deadline"],
+                                          self.sim.now + self.p.observe_detour_timeout_factor * needed + 20.0)
 
     def approach_viewpoint(self, x, y, heading):
         """localize_and_navigate._approach_viewpoint: near_goal is 0.35 m, but the observation planner only

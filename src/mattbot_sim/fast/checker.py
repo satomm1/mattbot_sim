@@ -55,9 +55,12 @@ def candidates_of(beliefs):
 class ObservationCore:
     """Fleet-wide, robot-independent parts of the observation planner."""
 
-    def __init__(self, grid, params, cache_dir=None):
+    def __init__(self, grid, params, cache_dir=None, grid_mod=None):
+        """grid: the static /map (line of sight); grid_mod: /map_mod, merged into the roadmap's map as
+        observation_planner does (max(/map, /map_mod), the navigator's driving map)."""
         self.params = params
         self.grid = grid
+        self.grid_mod = grid_mod
         self.origin = (grid.origin_x, grid.origin_y)
         self.blocking = blocking_mask(np.asarray(grid.occupancy).ravel(), grid.width, grid.height)
         self.viewsheds = {}  # object_id -> (Viewshed, signature)
@@ -77,7 +80,10 @@ class ObservationCore:
         from mattbot_sim.detour_check import occupancy_tuple
 
         cache_dir = cache_dir or os.path.join(tempfile.gettempdir(), "mattbot_fastsim_roadmap")
-        roadmap, _cached = load_or_build_roadmap(*occupancy_tuple(self.grid), params=RoadmapParams(robot_radius=0.4),
+        data, w, h, res, origin = occupancy_tuple(self.grid)
+        if self.grid_mod is not None and self.grid_mod.occupancy.shape == self.grid.occupancy.shape:
+            data = np.maximum(data, occupancy_tuple(self.grid_mod)[0])
+        roadmap, _cached = load_or_build_roadmap(data, w, h, res, origin, params=RoadmapParams(robot_radius=0.4),
                                                  cache_dir=cache_dir)
         self.detour_planner = DetourPlanner(roadmap)
         if self.params.observe_scout:
@@ -124,6 +130,7 @@ class CheckPlanner:
 
     def __init__(self, core):
         self.core = core
+        self.blocked = None  # detour.BlockedPlanners for this robot's object layer (observation_planner /object_map)
         p = core.params
         self.policy = ThresholdPolicy(
             check_below_belief=p.observe_check_below_belief, cooldown_s=p.observe_cooldown_s, max_cost_s=0.0,
@@ -151,8 +158,19 @@ class CheckPlanner:
     def record_check(self, object_id, t):
         self.policy.record_check(object_id, t)
 
+    def planners(self, object_layer=None, layer_key=None):
+        """(DetourPlanner, ScoutPlanner) with this robot's object layer blocked (observation_planner._planners)."""
+        core = self.core
+        if core.detour_planner is None:
+            return None, None
+        if self.blocked is None or self.blocked.base is not core.detour_planner:
+            from navigation_utils.detour import BlockedPlanners
+
+            self.blocked = BlockedPlanners(core.detour_planner, 0.4, with_scout=core.scout_planner is not None)
+        return self.blocked.get(object_layer, layer_key, core.origin, core.grid.resolution)
+
     def select(self, path_xy, beliefs, now, exclude=(), start_pose=None, goal_theta=None, times=None,
-               peer_intents=None, robot_id=None):
+               peer_intents=None, robot_id=None, object_layer=None, layer_key=None):
         """observation_planner.select_srv: path (strided trajectory points, ending at the park pose) -> [StopRequest].
         start_pose (x, y, theta): the robot may look from there first (allow_start_check), else None.
         times: trajectory time (s from now) per path point. peer_intents / robot_id: the other robots' live
@@ -178,6 +196,8 @@ class CheckPlanner:
         if core.tracker is not None and core.detour_planner is not None:
             from navigation_utils.detour import DetourParams
 
+            detour_planner = self.planners(object_layer, layer_key)[0]
+
             dcands = pol.detour_candidates(path_xy, cands, views, now, exclude, covered=covered, start_xy=start_xy,
                                            times=times)
             t_bound = pol.detour_bound_time(now, times)
@@ -185,8 +205,8 @@ class CheckPlanner:
             for c in dcands:
                 d_star = pol.max_detour_m(c, t_bound)
                 if d_star > 0:
-                    targets[c.object_id] = (c.x, c.y, core.detour_planner.viewpoint_nodes(views[c.object_id]), d_star)
-            detours = core.detour_planner.compute(
+                    targets[c.object_id] = (c.x, c.y, detour_planner.viewpoint_nodes(views[c.object_id]), d_star)
+            detours = detour_planner.compute(
                 path_xy, targets, DetourParams(max_detour_m=core.params.observe_max_detour_m, r_max=core.params.r_max))
             chosen, evaluations = pol.detour_options(path_xy, cands, views, now, exclude, detours,
                                                      covered=covered, start_xy=start_xy, times=times)
@@ -203,7 +223,8 @@ class CheckPlanner:
         cands = {c.object_id: c for c in candidates_of(beliefs)}
         return self.policy.revalidate(kind, list(object_ids), cands, now, planned_eta, cost_s)
 
-    def evaluate_scout(self, pose, beliefs, now, idle, peer_intents=None, robot_id=None):
+    def evaluate_scout(self, pose, beliefs, now, idle, peer_intents=None, robot_id=None, object_layer=None,
+                       layer_key=None):
         """observation_planner.evaluate_scout from pose (x, y, theta) -> decision dict (scoring.add_scout_decision).
         With idle False nothing is chosen (as the planner's periodic decision)."""
         core, pol = self.core, self.policy
@@ -212,6 +233,8 @@ class CheckPlanner:
         if core.scout_planner is None:
             return decision
         from navigation_utils.scout import ScoutParams
+
+        detour_planner, scout_planner = self.planners(object_layer, layer_key)
 
         p = core.params
         cands = candidates_of(beliefs)
@@ -222,8 +245,8 @@ class CheckPlanner:
         for c in eligible:
             limit = pol.max_scout_m(c, now)
             if limit > 0:
-                targets[c.object_id] = (c.x, c.y, core.detour_planner.viewpoint_nodes(views[c.object_id]), limit)
-        results = core.scout_planner.compute((pose[0], pose[1]), targets,
+                targets[c.object_id] = (c.x, c.y, detour_planner.viewpoint_nodes(views[c.object_id]), limit)
+        results = scout_planner.compute((pose[0], pose[1]), targets,
                                              ScoutParams(max_scout_m=p.observe_max_scout_m, r_max=p.r_max),
                                              start_heading=pose[2])
         _chosen, evaluations = pol.scout_options((pose[0], pose[1]), cands, views, now, (), results)

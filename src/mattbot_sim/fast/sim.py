@@ -78,7 +78,7 @@ class FastSim:
                                p.cruising_velocity)
         self.world = FleetWorld(grid, [SimObject(o.object_id, o.class_name, o.x, o.y, o.width, o.present)
                                        for o in base.objects], now=0.0)
-        self.core = ObservationCore(grid, p, cache_dir=roadmap_cache_dir)
+        self.core = ObservationCore(grid, p, cache_dir=roadmap_cache_dir, grid_mod=grid_mod)
         self.ledger = FleetLedger(p.ledger_match_radius_m, p.belief_hold_s, p.belief_decay_s)
         self.intents = FleetIntentBoard(p.intent_delay_s, p.intent_stale_s)  # observation_ledger intents + DDS
         self.camera = CameraModel()
@@ -255,7 +255,8 @@ class FastSim:
                 continue
             beliefs = self.beliefs() if beliefs is None else beliefs
             decision = r.planner.evaluate_scout((r.pose.x, r.pose.y, r.pose.theta), beliefs, self.now, True,
-                                                peer_intents=self.peer_intents(r), robot_id=r.id)
+                                                peer_intents=self.peer_intents(r), robot_id=r.id,
+                                                object_layer=r.mapper.object_layer(), layer_key=r.mapper.version)
             line = r.scorer.add_scout_decision(self.now, decision)
             if line:
                 self.note(r, line)

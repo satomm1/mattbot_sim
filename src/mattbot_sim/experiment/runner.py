@@ -122,9 +122,16 @@ def run_row(sim, orchestrator, obstacles, condition, seed, wall_s):
         row["share_idle"] = round(max(robot_s - task_s - trips_s, 0.0) / robot_s, 4)
     for kind in ("OPPORTUNISTIC", "AT_START", "AT_GOAL", "DETOUR", "SCOUT"):
         row["checks_%s" % kind.lower()] = sum(s["observation_stops_by_kind"][kind]["ENDED"] for s in summaries.values())
-    for key in ("detours_started", "detours_yielded", "scouts_started", "scouts_done", "scouts_yielded",
-                "scouts_cancelled", "stops_skipped"):
+    for key in ("detours_started", "detours_yielded", "detours_abandoned", "scouts_started", "scouts_done",
+                "scouts_yielded", "scouts_cancelled", "stops_skipped"):
         row[key] = sum(s.get(key, 0) for s in summaries.values())
+    reasons = {}
+    for s in summaries.values():
+        for r in s.get("detour_abandon_reasons", []):
+            if r.startswith("abandoned"):
+                reasons[r] = reasons.get(r, 0) + 1
+    row["detours_too_long"] = sum(n for r, n in reasons.items() if "took too long" in r)
+    row["detour_abandon_reasons"] = "; ".join("%s x%d" % (r, n) for r, n in sorted(reasons.items())) or None
     first = next(iter(summaries.values()))  # one fleet ledger: the same for every robot
     row["false_removals"] = first["false_removals"]
     row["obstacles_known"] = sum(o["known"] for o in obstacles)

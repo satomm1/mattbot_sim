@@ -356,3 +356,28 @@ def test_orchestrator_hands_a_stuck_robots_task_to_another():
     orch.on_start(sim)
     sim.tick(orch, 60)
     assert orch.tasks[0]["status"] == "failed" and orch.tasks[0]["handoffs"] == 0
+
+
+def test_detour_deadline_covers_the_planned_drive():
+    """KNOWN_ISSUES 12.9: the deadline was 2 x the detour's extra cost + 20 s, too short for a detour that leaves
+    the path well before its viewpoint; it now also covers the planned drive there, the align pause and the looks."""
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    path = os.path.join(PKG, "scenarios", "detour_present.yaml")
+    sim = FastSim(path, params=FastParams().update({"observe_detour": True}), seed=0, duration=300)
+    nav = next(iter(sim.robots.values())).nav
+    seen, original = [], nav.start_detour
+
+    def record():
+        original()
+        if nav.detour is not None and nav.mode == "ALIGN":
+            seen.append((sim.now, nav.detour["deadline"], nav.duration, len(nav.detour["stop"].object_ids)))
+
+    nav.start_detour = record
+    sim.run()
+    p = sim.params
+    assert seen
+    for now, deadline, duration, n in seen:
+        needed = duration + p.post_align_pause_s + p.observe_dwell_s * n
+        assert deadline >= now + p.observe_detour_timeout_factor * needed + 20.0 - 1e-6

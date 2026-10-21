@@ -152,13 +152,15 @@ def report(run_dir, baseline=None, latency_baseline=None):
     # ---- Cost ----
     if "dist_check_m_per_h" in runs.columns:
         lines += ["", "## Cost of checking (fleet, per run; mean [95% CI])", "",
-                  "| condition | check trips (m/h) | mean task time (s) | unfinished tasks | plan failures | looking | on check trips | on tasks | idle |",
-                  "|---|---|---|---|---|---|---|---|---|"]
+                  "| condition | check trips (m/h) | mean task time (s) | unfinished tasks | plan failures | detours abandoned (too long) | looking | on check trips | on tasks | idle |",
+                  "|---|---|---|---|---|---|---|---|---|---|"]
         for c in conditions:
             r = runs[runs["condition"] == c]
-            lines.append("| %s | %s | %s | %.1f | %.1f | %.1f%% | %.1f%% | %.1f%% | %.1f%% |" % (
+            ab = "%d (%d)" % (r["detours_abandoned"].sum(), r["detours_too_long"].sum()) \
+                if "detours_too_long" in r.columns else "-"
+            lines.append("| %s | %s | %s | %.1f | %.1f | %s | %.1f%% | %.1f%% | %.1f%% | %.1f%% |" % (
                 c, _fmt(*mean_ci(r["dist_check_m_per_h"], rng)), _fmt(*mean_ci(r["mean_task_s"], rng), digits=0),
-                r["tasks_unfinished"].mean(), r["plan_failures"].mean(), 100 * r["share_looking"].mean(),
+                r["tasks_unfinished"].mean(), r["plan_failures"].mean(), ab, 100 * r["share_looking"].mean(),
                 100 * r["share_check_trips"].mean(), 100 * r["share_task"].mean(), 100 * r["share_idle"].mean()))
         lines += ["", "Time shares are of robot time (run length x robots); \"looking\" (turning to look and dwelling) "
                   "is also part of the task or check trip it happens on."]
