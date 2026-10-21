@@ -1,0 +1,23 @@
+# Smoke test of the synthetic map ladder (mattbot_sim/maps, scripts/make_maps.py): the robot patrols the south
+# corridor (y = 6) past a chair and a cone against its walls; the chair is taken away after 150 s.
+# Expected: the ledger learns both, and a check after the removal reports the chair ABSENT and removes it.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=map_ladder speed:=2
+name: map_ladder
+map: ladder
+start: {x: 10.0, y: 6.0, theta: 0.0}
+objects:
+  - {id: chair_1, class: chair, x: 20.0, y: 6.7, width: 0.4}
+  - {id: cone_1, class: cone, x: 35.0, y: 5.3, width: 0.3}
+waypoints:
+  - {x: 46.0, y: 6.0, theta: 3.14159}
+  - {x: 8.0, y: 6.0, theta: 0.0}
+loop: true
+duration: 600
+events:
+  - {at: 150, remove: chair_1}
+expect:
+  min_ledger_objects_added: 2
+  correct_removals: 1
+  false_removals: 0
+  wrong_observation_outcomes: 0
+  goal_resends: 0

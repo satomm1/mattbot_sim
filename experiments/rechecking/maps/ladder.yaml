@@ -1,0 +1,11 @@
+# The main re-checking experiment on the synthetic map ladder (mattbot_sim/maps, scripts/make_maps.py):
+# two long corridors joined by four rungs, low redundancy (a blocked rung means a long way round). Same
+# workload, obstacles, conditions and seeds as ../main.yaml.
+extends: ../main.yaml
+name: rechecking_ladder
+map: ladder
+landmarks: ../../landmarks_ladder.yaml
+robots:
+  - {id: 91, start: {x: 18.0, y: 6.0, theta: 0.0}}
+  - {id: 92, start: {x: 40.0, y: 24.0, theta: 3.14159}}
+  - {id: 93, start: {x: 54.0, y: 6.0, theta: 3.14159}}

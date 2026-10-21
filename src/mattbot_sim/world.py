@@ -63,6 +63,9 @@ def load_json_map(path):
     return GridMap(occ, float(m["resolution"]), float(m.get("origin_x", 0.0)), float(m.get("origin_y", 0.0)))
 
 
+SIM_MAPS_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "maps"))
+
+
 def load_yaml_map(path, image=None):
     """map_server YAML + PGM (trinary interpretation). ``image`` overrides the YAML's image file."""
     from PIL import Image
@@ -85,9 +88,14 @@ def load_maps(spec, map_json_dir):
     """Load (map, map_mod) as the robots do.
 
     ``spec`` is either a JSON map stem in ``map_json_dir`` (``current_map`` -> current_map.json and
-    current_map_mod.json), or a path to a map_server .yaml (its ``<image stem>_mod.pgm`` is used for map_mod).
-    The mod map falls back to the plain map when no variant exists.
+    current_map_mod.json), the name of a simulation map in mattbot_sim/maps (``grid_office`` ->
+    maps/grid_office.yaml, see synthetic_maps.py), or a path to a map_server .yaml (its ``<image stem>_mod.pgm`` is
+    used for map_mod). The mod map falls back to the plain map when no variant exists.
     """
+    if not spec.endswith((".yaml", ".json")) and not os.path.isabs(spec) \
+            and not os.path.exists(os.path.join(map_json_dir, spec + ".json")) \
+            and os.path.exists(os.path.join(SIM_MAPS_DIR, spec + ".yaml")):
+        spec = os.path.join(SIM_MAPS_DIR, spec + ".yaml")
     if spec.endswith(".yaml"):
         grid = load_yaml_map(spec)
         with open(spec, "r") as f:

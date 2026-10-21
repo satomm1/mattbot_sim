@@ -309,6 +309,25 @@ After a change to the robot code:
 2. copy the new summaries into `fixtures/ros/`;
 3. if the tests then fail, fix the fast model, not the tolerances.
 
+## Simulation maps
+
+Besides the robots' maps (`mattbot_mcl/map_json`, e.g. `current_map`), two synthetic maps with clean walls are made by
+`scripts/make_maps.py` from `src/mattbot_sim/synthetic_maps.py` into `maps/` (map_server `.yaml` / `.pgm`, plus an
+identical `_mod.pgm`). Scenarios and experiment specs use them by name (`map: grid_office`): `world.load_maps` looks in
+`maps/` when no JSON map of that name exists. Re-run `make_maps.py` after changing a layout; `test/test_maps.py` checks
+that the files match the generator.
+
+| map | size | layout |
+|---|---|---|
+| `grid_office` | 60 x 40 m | a 3 x 4 grid of 2 m corridors (six blocks), two rooms and an alcove per block: high redundancy, every blocked corridor has a short way around |
+| `ladder` | 84 x 34 m | two long corridors joined by four 1.8 m rungs, rooms on both sides and in the bays, a dead-end east wing: low redundancy, a blocked rung means a long way round |
+
+Both are built for the experiment's obstacle types: a 1 m object closes a corridor, a 0.5 m one against a wall leaves
+room to pass, and rooms and alcoves are off the routes but in view. Every corridor segment is on a loop; only room
+doors, alcoves and the ladder's wing are dead ends. Each map has a landmarks file (`experiments/landmarks_<name>.yaml`,
+14 destinations), an experiment spec (`experiments/rechecking/maps/<name>.yaml`, extends `main.yaml`) and a smoke
+scenario (`scenarios/map_<name>.yaml`, for the fast and the ROS sim).
+
 ## Experiments
 
 `scripts/experiment.py` compares re-checking strategies in the fast simulator. Every condition runs the same seeded
