@@ -6,7 +6,7 @@ counts as available (the task pre-empts the scout: FastNavigator.set_goal cancel
 robot is IDLE for idle_settle_s, at least 3 s after the goal was sent, within reach_tol_m of the destination
 (the PatrolOrchestrator rule); a robot that went IDLE short of it gets the goal again, up to max_retries, and a
 task that takes longer than task_timeout_s or runs out of retries fails. The run ends (sim.done) when every task
-is done or failed.
+is done or failed, or, with end_at_horizon, only at the simulator's duration (tasks still open are unfinished).
 """
 
 import math
@@ -15,7 +15,9 @@ from mattbot_sim.fast.orchestrator import Orchestrator
 
 
 class TaskOrchestrator(Orchestrator):
-    def __init__(self, tasks, dwell_s=5.0, reach_tol_m=0.5, idle_settle_s=1.5, max_retries=3, task_timeout_s=900.0):
+    def __init__(self, tasks, dwell_s=5.0, reach_tol_m=0.5, idle_settle_s=1.5, max_retries=3, task_timeout_s=900.0,
+                 end_at_horizon=False):
+        self.end_at_horizon = bool(end_at_horizon)
         self.tasks = [dict(t, status="waiting", robot=None, assigned_s=None, done_s=None, retries=0) for t in tasks]
         self.dwell_s = float(dwell_s)
         self.reach_tol_m = reach_tol_m
@@ -95,6 +97,11 @@ class TaskOrchestrator(Orchestrator):
             self.state[rid]["task"] = task
             self._send(sim, rid, task)
 
-        if self.next_release >= len(self.tasks) and not self.pending and all(
+        if not self.end_at_horizon and self.next_release >= len(self.tasks) and not self.pending and all(
                 st["task"] is None for st in self.state.values()):
             sim.done = True
+
+
+def orchestrator_for(spec, instance):
+    """The TaskOrchestrator of an experiment spec for one instance."""
+    return TaskOrchestrator(instance["tasks"], dwell_s=spec.tasks["dwell_s"], end_at_horizon=spec.end_at_horizon)

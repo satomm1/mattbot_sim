@@ -25,8 +25,9 @@ def copy_spec(spec, out_dir):
     """spec.yaml and its landmarks file in the run directory (the copy refers to the copied landmarks)."""
     import yaml
 
-    with open(spec.path) as f:
-        d = yaml.safe_load(f)
+    from mattbot_sim.experiment.spec import read_spec_dict
+
+    d = read_spec_dict(spec.path)  # with extends resolved
     name = os.path.basename(spec.landmarks_path)
     shutil.copy(spec.landmarks_path, os.path.join(out_dir, name))
     d["landmarks"] = name
@@ -61,7 +62,8 @@ def obstacle_rows(sim, instance):
         t_known = min(known) if known else None
         appeared, gone = ob["appear_s"] <= end, ob["remove_s"] <= end
         t_dropped = min(r["t"] for r in removed) if removed else None
-        row = OrderedDict(obstacle=ob["id"], cls=ob["class"], x=ob["x"], y=ob["y"], width=ob["width"], I_o=ob["I_o"],
+        row = OrderedDict(obstacle=ob["id"], type=ob.get("type", "blocking"), cls=ob["class"], x=ob["x"], y=ob["y"],
+                          width=ob["width"], I_o=ob["I_o"],
                           appear_s=ob["appear_s"], remove_s=ob["remove_s"], appeared=int(appeared), removed=int(gone),
                           known=int(t_known is not None), known_s=t_known, known_after_s=None,
                           dropped_s=t_dropped, latency_s=None, censored=0, ghost_s=0.0, dropped_by=None,
@@ -98,12 +100,25 @@ def run_row(sim, orchestrator, obstacles, condition, seed, wall_s):
     dist = OrderedDict()
     for s in summaries.values():
         for k, v in s["navigator"].items():
-            if k.startswith(("dist_", "t_")) or k in ("replans", "plan_failures"):
+            if k.startswith(("dist_", "t_", "time_")) or k in ("replans", "plan_failures"):
                 dist[k] = dist.get(k, 0.0) + float(v)
     for k in ("dist_total_m", "dist_task_m", "dist_detour_m", "dist_scout_m", "dist_return_m", "dist_other_m",
               "replans", "plan_failures"):
         row[k] = round(dist.get(k, 0.0), 1)
     row["dist_per_task_m"] = round(row["dist_total_m"] / len(done), 2) if done else None
+    # Cost of checking: driving for detours / scouts (and back), and how the robots' time was spent
+    row["dist_check_m"] = round(row["dist_detour_m"] + row["dist_scout_m"] + row["dist_return_m"], 1)
+    hours = sim.now / 3600.0
+    row["dist_check_m_per_h"] = round(row["dist_check_m"] / hours, 1) if hours > 0 else None
+    robot_s = sim.now * len(summaries)
+    if robot_s > 0:
+        check_s = sum(dist.get("t_%s_s" % m, 0.0) for m in ("OBSERVE_TURN", "OBSERVE_DWELL"))
+        trips_s = sum(dist.get("time_%s_s" % a, 0.0) for a in ("detour", "scout", "return"))
+        task_s = dist.get("time_task_s", 0.0)
+        row["share_looking"] = round(check_s / robot_s, 4)  # turning to look and dwelling, on any trip
+        row["share_check_trips"] = round(trips_s / robot_s, 4)  # out on detours / scouts and back
+        row["share_task"] = round(task_s / robot_s, 4)  # with a task goal (includes looking on the way)
+        row["share_idle"] = round(max(robot_s - task_s - trips_s, 0.0) / robot_s, 4)
     for kind in ("OPPORTUNISTIC", "AT_START", "AT_GOAL", "DETOUR", "SCOUT"):
         row["checks_%s" % kind.lower()] = sum(s["observation_stops_by_kind"][kind]["ENDED"] for s in summaries.values())
     for key in ("detours_started", "detours_yielded", "scouts_started", "scouts_done", "scouts_yielded",
@@ -125,7 +140,7 @@ def run_row(sim, orchestrator, obstacles, condition, seed, wall_s):
 def run_one(job):
     """One (condition, seed) run (top level, so multiprocessing can pickle it)."""
     spec_path, condition, seed, scenario_path, instance, cache_dir = job
-    from mattbot_sim.experiment.orchestrator import TaskOrchestrator
+    from mattbot_sim.experiment.orchestrator import orchestrator_for
     from mattbot_sim.fast.params import FastParams
     from mattbot_sim.fast.sim import FastSim
 
@@ -133,7 +148,7 @@ def run_one(job):
     settings = spec.params_of(condition)
     params = FastParams().update(settings)
     params._explicit = dict(settings)
-    orch = TaskOrchestrator(instance["tasks"], dwell_s=spec.tasks["dwell_s"])
+    orch = orchestrator_for(spec, instance)
     t0 = time.time()  # wall clock: run time
     sim = FastSim(scenario_path, params=params, seed=seed, orchestrator=orch, duration=spec.max_duration_s,
                   roadmap_cache_dir=cache_dir)

@@ -1,0 +1,46 @@
+# Re-checking experiment, main configuration (NEXT_STEPS 2.3). Three robots serve a light stream of trips between
+# landmarks on current_map for an hour while six obstacles appear and are later taken away: two that block a
+# passage (the fleet routes around them), two on a frequent route that robots still drive past, and two off the
+# corridors but in view of one. Conditions add the re-checking mechanisms one by one; `oracle` (the ledger drops
+# an obstacle the moment it is removed) is the best case. Every condition runs the same seeded instances.
+#   python3 mattbot_sim/scripts/experiment.py run mattbot_sim/experiments/rechecking/main.yaml --jobs 4
+# Sweeps (each extends this file): fleet1.yaml / fleet5.yaml (fleet size), busy.yaml (workload).
+name: rechecking_main
+map: current_map
+landmarks: ../landmarks_current_map.yaml
+robots:
+  - {id: 91, start: {x: 28.0, y: 18.95, theta: 0.0}}
+  - {id: 92, start: {x: 60.0, y: 18.95, theta: 3.14159}}
+  - {id: 93, start: {x: 44.0, y: 4.0, theta: 0.0}}
+tasks:
+  release_rate_per_robot_per_min: 0.17   # light: a robot does about 0.37 trips/min, so it is busy about 45 % of the time
+  until_s: 3600                          # Poisson releases for the whole hour
+  dwell_s: 5
+obstacles:
+  types:
+    blocking: {count: 2, width_m: 1.0, classes: [bench, chair], min_importance_m: 1.0}
+    on_route: {count: 2, width_m: 0.5, classes: [chair, cone]}
+    visible: {count: 2, width_m: 0.5, classes: [chair, cone], max_importance_m: 0.5}   # may block a rarely used edge
+  route_min_trip_share: 0.1     # frequent route: an edge on at least 10 % of the landmark trips' shortest paths
+  off_route_min_m: 1.5         # visible: at least this far from every frequent-route cell
+  appear_s: [0, 900]
+  lifetime_s: [300, 1200]       # all gone by 35 min: at least 25 min left to notice
+  min_separation_m: 3.0
+  clearance_m: 2.0              # never on a landmark or a robot start
+max_duration_s: 3600
+end_at_horizon: true            # always the full hour (tasks still open then are unfinished)
+common:                         # the robots' real belief model and check settings (not the sim's fast defaults)
+  belief_hold_s: 60
+  belief_decay_s: 120
+  observe_check_below_belief: 0.5
+  observe_cooldown_s: 120
+  observe_dwell_s: 4
+  ledger_blockout: true         # the fleet plans around every ledger object until it is removed
+  robots_block: false           # robots pass through each other (as the real navigator and the ROS sim)
+conditions:
+  none: {observe: false}
+  opportunistic: {observe: true}
+  detour: {observe: true, observe_detour: true}
+  scout: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true}
+  oracle: {observe: false, oracle_removals: true}
+seeds: 40

@@ -43,6 +43,7 @@ class FastParams:
     # ---- fast-sim model ----
     dt: float = 0.1  # s; navigator loop (10 Hz, localize_and_navigate.py run())
     robots_block: bool = True  # robots collide with each other (False: they pass through, as in the ROS sim)
+    oracle_removals: bool = False  # experiments' reference: the ledger drops an object the moment it is removed
     block_wait_s: float = 3.0  # blocked by another robot this long -> replan around it
     robot_radius: float = 0.2  # sim_world collision disc (also how other robots see / block it)
 

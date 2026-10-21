@@ -1,0 +1,6 @@
+# Fleet-size sweep: one robot (the same per-robot workload as main.yaml).
+extends: main.yaml
+name: rechecking_fleet1
+robots:
+  - {id: 91, start: {x: 28.0, y: 18.95, theta: 0.0}}
+seeds: 30

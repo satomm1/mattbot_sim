@@ -177,6 +177,12 @@ class FastSim:
                 self.note(robot, robot.scorer.add_result(self.now, object_id, result["class_name"], result["outcome"],
                                                          result["reason"], window_start, window_end))
 
+    def oracle_remove(self, obj):
+        """oracle_removals: drop the ledger object at a removed object's place, as a check would (blockouts clear)."""
+        rid = next(iter(self.robots))
+        if self.ledger.remove_near(rid, self.now, obj.class_name, obj.x, obj.y, obj.width) is not None:
+            self.removal_log.append((self.now, rid, "ORACLE", obj.class_name, obj.x, obj.y))
+
     def confirm(self, robot, cls, x, y, w):
         """/confirmed_objects: the robot's ledger entry, and (data_publisher) the other robots' mappers."""
         self.ledger.confirm(robot.id, self.now, cls, x, y, w)
@@ -195,6 +201,8 @@ class FastSim:
             e = self.events.pop(0)
             desc = self.world.apply_event(e, self.now)
             changed = True
+            if self.params.oracle_removals and "remove" in e:
+                self.oracle_remove(self.world.objects[e["remove"]])
             for r in self.robots.values():
                 self.note(r, "event: " + desc)
         if changed or not getattr(self, "_truth_set", False):
@@ -269,6 +277,7 @@ class FastSim:
             d = math.hypot(r.pose.x - x0, r.pose.y - y0)
             c["dist_total_m"] = c.get("dist_total_m", 0.0) + d
             c["dist_%s_m" % activity] = c.get("dist_%s_m" % activity, 0.0) + d
+            c["time_%s_s" % activity] = c.get("time_%s_s" % activity, 0.0) + self.dt
             c["t_%s_s" % mode] = c.get("t_%s_s" % mode, 0.0) + self.dt
         self.update_discs()
         if self.now + 1e-9 >= self.next_detect:

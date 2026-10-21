@@ -140,3 +140,108 @@ def test_report_handles_censored_latencies():
     assert km_median([10, 20, 30], [False, True, True]) == float("inf")  # 2/3 still in the ledger at the end
     m, lo, hi = mean_ci([1.0, 2.0, 3.0, 4.0])
     assert m == 2.5 and lo <= m <= hi
+
+
+# ---------- Typed obstacles, horizon, oracle (experiments/rechecking) ----------
+
+MAIN = os.path.join(PKG, "experiments", "rechecking", "main.yaml")
+
+
+def test_spec_extends_and_horizon_tasks():
+    from mattbot_sim.experiment.spec import load_spec
+
+    main, fleet1, busy = (load_spec(os.path.join(PKG, "experiments", "rechecking", n)) for n in
+                          ("main.yaml", "fleet1.yaml", "busy.yaml"))
+    assert list(fleet1.conditions) == list(main.conditions) and fleet1.common == main.common
+    assert len(fleet1.robots) == 1 and fleet1.landmarks == main.landmarks and fleet1.end_at_horizon
+    assert fleet1.obstacle_types == main.obstacle_types  # merged key by key, not replaced
+    assert main.release_rate_per_min == pytest.approx(0.17 * 3) and fleet1.release_rate_per_min == pytest.approx(0.17)
+    assert busy.release_rate_per_min == pytest.approx(0.33 * 3) and busy.tasks["dwell_s"] == main.tasks["dwell_s"]
+    pilot = load_spec(SPEC)  # flat obstacle keys: one blocking type
+    assert list(pilot.obstacle_types) == ["blocking"] and not pilot.end_at_horizon
+
+
+@pytest.fixture(scope="module")
+def typed():
+    from mattbot_sim.experiment.generate import setup as setup_spec
+    from mattbot_sim.experiment.spec import load_spec
+
+    spec = load_spec(MAIN)
+    ctx, landmarks, cands, conn = setup_spec(spec)
+    return spec, ctx, landmarks, cands, conn
+
+
+def test_typed_candidates_meet_their_definitions(typed):
+    spec, ctx, _landmarks, cands, conn = typed
+    by = {t: [c for c in cands if c["type"] == t] for t in ("blocking", "on_route", "visible")}
+    assert len(by["blocking"]) > 50 and len(by["on_route"]) > 50 and len(by["visible"]) > 20
+    o = spec.obstacles
+    rng = np.random.default_rng(1)
+    for typ, cs in by.items():
+        width = spec.obstacle_types[typ]["width_m"]
+        for k in rng.choice(len(cs), size=min(15, len(cs)), replace=False):
+            c = cs[int(k)]
+            assert c["width"] == width and conn.keeps_connected(c["x"], c["y"], width)
+            if typ == "blocking":
+                assert c["blocked"] == 1
+            elif typ == "on_route":
+                assert c["blocked"] == 0 and c["I_o"] == 0.0 and c["route_share"] >= o["route_min_trip_share"]
+                assert c["off_centre_m"] > 0.0  # beside the centre line, against the wall
+            else:
+                assert c["route_in_view_m"] >= 1.0
+
+
+def test_typed_instances(typed):
+    from mattbot_sim.experiment.generate import make_instance
+
+    spec, _ctx, landmarks, cands, conn = typed
+    for seed in range(4):
+        inst = make_instance(spec, seed, cands, landmarks, conn)
+        types = [ob["type"] for ob in inst["obstacles"]]
+        assert types == ["blocking"] * 2 + ["on_route"] * 2 + ["visible"] * 2
+        for ob in inst["obstacles"]:
+            cfg = spec.obstacle_types[ob["type"]]
+            assert ob["width"] == cfg["width_m"] and ob["class"] in cfg["classes"]
+            assert ob["I_o"] >= cfg["min_importance_m"]
+            assert cfg["max_importance_m"] is None or ob["I_o"] <= cfg["max_importance_m"]
+            assert ob["remove_s"] <= spec.obstacles["appear_s"][1] + spec.obstacles["lifetime_s"][1]
+        assert conn.keeps_connected_all([(ob["x"], ob["y"], ob["width"]) for ob in inst["obstacles"]])
+        rel = [t["release_s"] for t in inst["tasks"]]
+        assert rel and max(rel) <= spec.tasks["until_s"]
+        assert 0.5 * spec.release_rate_per_min * 60 < len(rel) < 1.6 * spec.release_rate_per_min * 60  # ~Poisson
+
+
+def test_oracle_drops_an_obstacle_when_it_is_removed(tmp_path):
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    events = [{"at": 1.0, "add": {"id": "c", "class": "chair", "x": 31.0, "y": 18.3, "width": 0.5}},
+              {"at": 30.0, "remove": "c"}]
+    path = _tiny_scenario(tmp_path, events)
+    for oracle in (False, True):
+        sim = FastSim(path, params=FastParams().update({"observe": False, "oracle_removals": oracle}), seed=0,
+                      duration=60)
+        sim.run()
+        scorer = next(iter(sim.robots.values())).scorer
+        assert [a["true_object"] for a in scorer.added] == ["c"]  # seen from the start pose
+        removals = [r for r in scorer.removals if r["correct"]]
+        if oracle:
+            assert len(removals) == 1 and removals[0]["t"] == pytest.approx(30.0, abs=1.01)
+            assert sim.removal_log[-1][2] == "ORACLE"
+        else:
+            assert not removals
+
+
+def test_end_at_horizon_runs_the_full_duration(tmp_path):
+    from mattbot_sim.experiment.orchestrator import TaskOrchestrator
+    from mattbot_sim.fast.sim import FastSim
+
+    tasks = [{"id": 0, "release_s": 0.0, "landmark": "a", "x": 34.0, "y": 18.95, "theta": 0.0}]
+    for horizon in (False, True):
+        orch = TaskOrchestrator(tasks, dwell_s=2.0, end_at_horizon=horizon)
+        sim = FastSim(_tiny_scenario(tmp_path), seed=0, orchestrator=orch, duration=120)
+        sim.run()
+        assert orch.tasks[0]["status"] == "done"
+        assert (sim.now >= 119.9) == horizon
+        c = next(iter(sim.robots.values())).nav.counters
+        assert c["time_task_s"] > 5.0 and c["time_task_s"] + c.get("time_other_s", 0.0) == pytest.approx(sim.now, abs=0.2)

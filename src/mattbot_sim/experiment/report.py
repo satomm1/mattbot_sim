@@ -5,6 +5,11 @@ and later removed, the latency from the true removal to the ledger drop. Obstacl
 of a run are censored there; the median and the curves use Kaplan-Meier, and the fraction censored is reported.
 Experiment 2 (distance): fleet distance per run (and per task), and its paired difference to the baseline
 condition on the same seed, with 95 % bootstrap confidence intervals.
+Per obstacle type (spec obstacles.types), the latency table is repeated by type. The cost of checking: distance
+driven for detours / scouts per hour, mean task time, and how the robots' time was spent. With an `oracle`
+condition (the ledger drops an obstacle the moment it is removed), each condition's saving in distance per task
+over the baseline is also given as a share of the oracle's. The trade-off plot shows, per condition, the
+ghost-blocked time saved over the baseline against the distance spent on check trips.
 """
 
 import os
@@ -126,11 +131,85 @@ def report(run_dir, baseline=None, latency_baseline=None):
     lines += ["", "Obstacles that appeared: %d per condition on average; known to the fleet: %.0f%%." % (
         len(known) / max(len(conditions), 1), 100.0 * known["known"].mean() if len(known) else 0.0)]
 
+    if "type" in obs.columns and obs["type"].nunique() > 1:
+        lines += ["", "### By obstacle type", "",
+                  "| type | condition | known / appeared | dropped | censored | latency mean of dropped (s) | KM median (s) | dropped by |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for typ in [t for t in ("blocking", "on_route", "visible") if t in set(obs["type"])]:
+            for c in conditions:
+                oc = obs[(obs["condition"] == c) & (obs["type"] == typ)]
+                o = oc[oc["latency_s"].notna() | (oc["censored"] == 1)]
+                times = np.where(o["censored"] == 1, o["ghost_s"], o["latency_s"]).astype(float)
+                cens = (o["censored"] == 1).to_numpy()
+                by = o["dropped_by"].dropna().value_counts()
+                app = oc[oc["appeared"] == 1]
+                lines.append("| %s | %s | %d / %d | %d | %d (%.0f%%) | %s | %s | %s |" % (
+                    typ, c, int(app["known"].sum()), len(app), int((~cens).sum()), int(cens.sum()),
+                    100.0 * cens.mean() if len(o) else 0.0, _fmt(*mean_ci(o["latency_s"].dropna(), rng)),
+                    ("%.0f" % km_median(times, cens)) if len(o) else "-",
+                    ", ".join("%s %d" % (k, v) for k, v in by.items()) or "-"))
+
+    # ---- Cost ----
+    if "dist_check_m_per_h" in runs.columns:
+        lines += ["", "## Cost of checking (fleet, per run; mean [95% CI])", "",
+                  "| condition | check trips (m/h) | mean task time (s) | unfinished tasks | plan failures | looking | on check trips | on tasks | idle |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for c in conditions:
+            r = runs[runs["condition"] == c]
+            lines.append("| %s | %s | %s | %.1f | %.1f | %.1f%% | %.1f%% | %.1f%% | %.1f%% |" % (
+                c, _fmt(*mean_ci(r["dist_check_m_per_h"], rng)), _fmt(*mean_ci(r["mean_task_s"], rng), digits=0),
+                r["tasks_unfinished"].mean(), r["plan_failures"].mean(), 100 * r["share_looking"].mean(),
+                100 * r["share_check_trips"].mean(), 100 * r["share_task"].mean(), 100 * r["share_idle"].mean()))
+        lines += ["", "Time shares are of robot time (run length x robots); \"looking\" (turning to look and dwelling) "
+                  "is also part of the task or check trip it happens on."]
+
+    # ---- Oracle share ----
+    if "oracle" in conditions and baseline != "oracle":
+        orc = runs[runs["condition"] == "oracle"].set_index("seed")
+        lines += ["", "## Share of the oracle's saving (distance per task, paired by seed)", "",
+                  "(%s - condition) / (%s - oracle), from the mean paired differences; 95%% bootstrap over seeds." % (
+                      baseline, baseline), "",
+                  "| condition | saving (m per task) | oracle saving (m per task) | share of oracle |", "|---|---|---|---|"]
+        for c in conditions:
+            if c in (baseline, "oracle"):
+                continue
+            r = runs[runs["condition"] == c].set_index("seed")
+            seeds = sorted(set(r.index) & set(base.index) & set(orc.index))
+            if not seeds:
+                continue
+            save = np.array([base.loc[s, "dist_per_task_m"] - r.loc[s, "dist_per_task_m"] for s in seeds], dtype=float)
+            full = np.array([base.loc[s, "dist_per_task_m"] - orc.loc[s, "dist_per_task_m"] for s in seeds], dtype=float)
+            share = save.mean() / full.mean() if full.mean() else float("nan")
+            idx = rng.integers(0, len(seeds), size=(BOOT, len(seeds)))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                boots = save[idx].mean(axis=1) / full[idx].mean(axis=1)
+            boots = boots[np.isfinite(boots)]
+            lo, hi = (np.percentile(boots, [2.5, 97.5]) if len(boots) > 1 else (float("nan"), float("nan")))
+            lines.append("| %s | %s | %s | %s |" % (c, _fmt(*mean_ci(save, rng), digits=2),
+                                                   _fmt(*mean_ci(full, rng), digits=2),
+                                                   _fmt(100 * share, 100 * lo, 100 * hi, digits=0) + " %"))
+
     text = "\n".join(lines) + "\n"
     with open(os.path.join(run_dir, "report.md"), "w") as f:
         f.write(text)
     _plots(run_dir, runs, conditions, baseline, curves)
     return text
+
+
+def tradeoff_points(runs, conditions, baseline, rng=None):
+    """Per condition: (check trips m/h mean, lo, hi), (ghost-blocked time saved over baseline per run, lo, hi)."""
+    rng = rng or np.random.default_rng(0)
+    base = runs[runs["condition"] == baseline].set_index("seed")
+    out = {}
+    for c in conditions:
+        if c == baseline:
+            continue
+        r = runs[runs["condition"] == c].set_index("seed")
+        seeds = sorted(set(r.index) & set(base.index))
+        saved = [base.loc[s, "ghost_s"] - r.loc[s, "ghost_s"] for s in seeds]
+        cost = r["dist_check_m_per_h"] if "dist_check_m_per_h" in r.columns else r["dist_detour_m"] * 0
+        out[c] = (mean_ci(cost, rng), mean_ci(saved, rng))
+    return out
 
 
 def _plots(run_dir, runs, conditions, baseline, curves):
@@ -139,8 +218,8 @@ def _plots(run_dir, runs, conditions, baseline, curves):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 3, figsize=(17, 5))
-    ax = axes[0]
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    ax = axes[0, 0]
     for c, (xs, ys) in curves.items():
         ax.step(xs, ys, where="post", label=c)
     ax.set_xlabel("time since removal (s)")
@@ -149,26 +228,47 @@ def _plots(run_dir, runs, conditions, baseline, curves):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    ax = axes[1]
-    data = [runs[runs["condition"] == c]["dist_total_m"].dropna() for c in conditions]
-    ax.boxplot(data, labels=conditions, showmeans=True)
-    ax.set_ylabel("fleet distance per run (m)")
-    ax.set_title("Distance to complete the tasks")
-    ax.grid(True, axis="y", alpha=0.3)
+    ax = axes[0, 1]
+    for c, ((cm, clo, chi), (sm, slo, shi)) in tradeoff_points(runs, conditions, baseline).items():
+        xerr = None if np.isnan(clo) else [[cm - clo], [chi - cm]]
+        yerr = None if np.isnan(slo) else [[sm - slo], [shi - sm]]
+        ax.errorbar([cm], [sm], xerr=xerr, yerr=yerr, fmt="o", capsize=4, label=c)
+        ax.annotate(c, (cm, sm), textcoords="offset points", xytext=(6, 6), fontsize=9)
+    ax.axhline(0.0, color="k", lw=0.8)
+    ax.set_xlabel("distance on check trips (m per hour, fleet)")
+    ax.set_ylabel("ghost-blocked time saved vs %s (s per run)" % baseline)
+    ax.set_title("Benefit vs cost (mean, 95% CI)")
+    ax.grid(True, alpha=0.3)
 
-    ax = axes[2]
-    base = runs[runs["condition"] == baseline].set_index("seed")["dist_total_m"]
+    ax = axes[1, 0]
+    col = "dist_per_task_m"
+    base = runs[runs["condition"] == baseline].set_index("seed")[col]
     others = [c for c in conditions if c != baseline]
     diffs = []
     for c in others:
-        r = runs[runs["condition"] == c].set_index("seed")["dist_total_m"]
+        r = runs[runs["condition"] == c].set_index("seed")[col]
         seeds = sorted(set(r.index) & set(base.index))
-        diffs.append([r[s] - base[s] for s in seeds])
+        diffs.append([r[s] - base[s] for s in seeds if not (np.isnan(r[s]) or np.isnan(base[s]))])
     if others:
         ax.boxplot(diffs, labels=others, showmeans=True)
     ax.axhline(0.0, color="k", lw=0.8)
-    ax.set_ylabel("distance - %s on the same seed (m)" % baseline)
-    ax.set_title("Paired difference")
+    ax.set_ylabel("distance per task - %s on the same seed (m)" % baseline)
+    ax.set_title("Paired difference in distance per task")
+    ax.grid(True, axis="y", alpha=0.3)
+
+    ax = axes[1, 1]
+    if "share_task" in runs.columns:
+        parts = [("share_task", "on tasks"), ("share_check_trips", "on check trips"), ("share_idle", "idle")]
+        bottom = np.zeros(len(conditions))
+        for key, label in parts:
+            vals = np.array([runs[runs["condition"] == c][key].mean() * 100 for c in conditions])
+            ax.bar(conditions, vals, bottom=bottom, label=label)
+            bottom += vals
+        look = [runs[runs["condition"] == c]["share_looking"].mean() * 100 for c in conditions]
+        ax.plot(conditions, look, "k^", label="looking (part of the above)")
+        ax.set_ylabel("share of robot time (%)")
+        ax.set_title("How the robots spent their time")
+        ax.legend(fontsize=8)
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
     fig.savefig(os.path.join(run_dir, "report.png"), dpi=110)

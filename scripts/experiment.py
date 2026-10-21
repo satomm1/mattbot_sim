@@ -5,6 +5,7 @@
   experiment.py run experiments/pilot.yaml [--out DIR] [--jobs 4] [--seeds 5 | --seeds 0,3,7] [--conditions a,b]
   experiment.py report DIR [--baseline none] [--latency-baseline opportunistic]
   experiment.py replay DIR --condition scout --seed 0 [--gif run.gif] [--png run.png] [-v]
+  experiment.py sweep DIR DIR ... [--factor robots] [--out DIR]           # run directories as levels of a factor
 
 See mattbot_sim/README.md "Experiments" for the spec format and the metrics.
 """
@@ -44,9 +45,13 @@ def cmd_generate(args):
         ox, oy, _ = spec.landmarks[name]
         if abs(ox - x) > 1e-6 or abs(oy - y) > 1e-6:
             print("landmark %s snapped from (%.2f, %.2f) to (%.2f, %.2f)" % (name, ox, oy, x, y))
-    usable = [c for c in cands if c["I_o"] >= float(spec.obstacles["min_importance_m"])]
-    print("%d candidate placements, %d with I_o >= %g m (%.0f s)" % (
-        len(cands), len(usable), spec.obstacles["min_importance_m"], time.time() - t0))  # wall clock: progress
+    for typ, cfg in spec.obstacle_types.items():
+        mine = [c for c in cands if c.get("type", "blocking") == typ]
+        top = cfg.get("max_importance_m")
+        usable = [c for c in mine if c["I_o"] >= float(cfg["min_importance_m"]) and (top is None or c["I_o"] <= top)]
+        print("%s: %d candidate placements, %d usable (I_o %g .. %s m)" % (
+            typ, len(mine), len(usable), cfg["min_importance_m"], "-" if top is None else "%g" % top))
+    print("candidates in %.0f s" % (time.time() - t0))  # wall clock: progress
     inst = make_instance(spec, args.seed, cands, landmarks, conn)
     base = os.path.join(out, "seed%d" % args.seed)
     with open(base + ".json", "w") as f:
@@ -54,8 +59,9 @@ def cmd_generate(args):
     write_scenario(spec, inst, base + ".yaml")
     plot_instance(spec, ctx, landmarks, cands, inst, base + ".png")
     for ob in inst["obstacles"]:
-        print("  %s %s at (%.2f, %.2f) I_o=%.1f m, %.0f-%.0f s" % (ob["id"], ob["class"], ob["x"], ob["y"], ob["I_o"],
-                                                                  ob["appear_s"], ob["remove_s"]))
+        print("  %s %s %s at (%.2f, %.2f) I_o=%.1f m, %.0f-%.0f s" % (
+            ob["id"], ob.get("type", "blocking"), ob["class"], ob["x"], ob["y"], ob["I_o"], ob["appear_s"],
+            ob["remove_s"]))
     print("%d tasks over %.0f s; wrote %s.{json,yaml,png}" % (len(inst["tasks"]), inst["tasks"][-1]["release_s"], base))
 
 
@@ -85,8 +91,14 @@ def cmd_report(args):
     print(report(args.dir, args.baseline, args.latency_baseline))
 
 
+def cmd_sweep(args):
+    from mattbot_sim.experiment.sweep import sweep_report
+
+    print(sweep_report(args.dirs, args.out or args.dirs[0], args.factor or None))
+
+
 def cmd_replay(args):
-    from mattbot_sim.experiment.orchestrator import TaskOrchestrator
+    from mattbot_sim.experiment.orchestrator import orchestrator_for
     from mattbot_sim.experiment.spec import load_spec
     from mattbot_sim.fast import viz
     from mattbot_sim.fast.params import FastParams
@@ -102,7 +114,7 @@ def cmd_replay(args):
     params = FastParams().update(settings)
     params._explicit = dict(settings)
     sim = FastSim(os.path.join(inst_dir, "seed%d.yaml" % args.seed), params=params, seed=args.seed,
-                  orchestrator=TaskOrchestrator(inst["tasks"], dwell_s=spec.tasks["dwell_s"]),
+                  orchestrator=orchestrator_for(spec, inst),
                   duration=spec.max_duration_s, verbose=args.verbose)
     if args.gif or args.png:
         sim.frames, sim.frame_every = [], args.frame_every
@@ -133,6 +145,11 @@ def main():
     p.add_argument("--baseline", default=None, help="distance baseline (default: the first condition)")
     p.add_argument("--latency-baseline", default=None)
     p.set_defaults(func=cmd_run)
+    p = sub.add_parser("sweep")
+    p.add_argument("dirs", nargs="+")
+    p.add_argument("--factor", default="", help="robots, rate_per_robot_per_min (default: the one that varies)")
+    p.add_argument("--out", default="", help="default: the first directory")
+    p.set_defaults(func=cmd_sweep)
     p = sub.add_parser("report")
     p.add_argument("dir")
     p.add_argument("--baseline", default=None)

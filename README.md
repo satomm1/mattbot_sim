@@ -317,38 +317,54 @@ instances, so results can be compared pair by pair on each seed. Each instance f
 - each obstacle's placement and when it appears and is removed.
 
 ```bash
-python3 mattbot_sim/scripts/experiment.py generate mattbot_sim/experiments/pilot.yaml          # instance + review PNG
-python3 mattbot_sim/scripts/experiment.py run mattbot_sim/experiments/pilot.yaml --jobs 4 [--seeds 5] [--conditions none,detour]
-python3 mattbot_sim/scripts/experiment.py report results/exp_pilot_<time>                     # report.md + report.png
-python3 mattbot_sim/scripts/experiment.py replay results/exp_pilot_<time> --condition scout --seed 0 --gif run.gif
+python3 mattbot_sim/scripts/experiment.py generate mattbot_sim/experiments/rechecking/main.yaml   # instance + review PNG
+python3 mattbot_sim/scripts/experiment.py run mattbot_sim/experiments/rechecking/main.yaml --jobs 4 [--seeds 5] [--conditions none,detour]
+python3 mattbot_sim/scripts/experiment.py report results/exp_<name>_<time>                        # report.md + report.png
+python3 mattbot_sim/scripts/experiment.py replay results/exp_<name>_<time> --condition scout --seed 0 --gif run.gif
+python3 mattbot_sim/scripts/experiment.py sweep DIR_fleet1 DIR_main DIR_fleet5 --factor robots    # sweep_robots.md / .png
 ```
 
-- **Spec** (`experiments/pilot.yaml`, format in `src/mattbot_sim/experiment/spec.py`):
+**The re-checking experiment** (`experiments/rechecking/`; NEXT_STEPS 2.3):
+- `main.yaml`: 3 robots, a light workload, an hour per run, 40 seeds. The other files `extends:` it and change one factor: `fleet1.yaml` / `fleet5.yaml` (1 / 5 robots, the same workload per robot), `busy.yaml` (twice the workload per robot). Run them all with a script like `results/rechecking_<date>/run_all.sh`.
+- Conditions: `none`, `opportunistic` (opportunistic and endpoint checks), `detour`, `scout`, and `oracle`, the best case: the ledger drops an obstacle the moment it is removed (`oracle_removals`).
+- Six obstacles per run, two of each type (`obstacles.types`):
+  - `blocking` (1 m): closes a passage that has a way around (I_o >= 1 m per trip). The fleet routes around it, so mostly detours and scouts can re-check it.
+  - `on_route` (0.5 m): against the wall of a frequent-route corridor, which stays passable. Robots drive past it.
+  - `visible` (0.5 m): off the frequent routes (>= 1.5 m) in a room, alcove or side corridor, in view of a frequent route: robots driving the route see it ahead (camera range, 5 m) and could check it from 1-3.5 m.
+  - A frequent route is a roadmap edge on at least 10 % of the landmark trips' shortest paths.
+- `end_at_horizon: true`: every run lasts the full hour; tasks are released as a Poisson stream until then (`tasks.until_s`, `release_rate_per_robot_per_min`). Obstacles are all removed by 35 min, so "censored" means not noticed within 25 min or more.
+
+- **Spec** (format in `src/mattbot_sim/experiment/spec.py`):
   - the map and landmarks (task destinations; `experiments/landmarks_current_map.yaml`) and the robots;
-  - the tasks (count, Poisson release rate, dwell) and the obstacles (count, minimum importance, width, classes, appear and lifetime ranges);
+  - the tasks (count or `until_s`, Poisson release rate per fleet or per robot, dwell) and the obstacles (per type: count, width, classes, importance range; appear and lifetime ranges);
   - `common` FastParams for every condition, then the `conditions`, each with its own FastParams on top;
-  - the seeds.
+  - the seeds; `extends:` another spec (sections merge key by key).
+  - `experiments/pilot.yaml` still uses the flat obstacle keys (one blocking type) and ends when the tasks are done.
 - **Obstacles:**
-  - Candidates are points along the roadmap's corridor centre lines, at least `min_importance_m` of importance I_o over the landmark trips, and never within `clearance_m` of a landmark or a robot start. They are cached in `~/.ros/mattbot_experiments`.
+  - Candidates (per type, see `src/mattbot_sim/experiment/generate.py`) are never within `clearance_m` of a landmark or a robot start. They are cached in `~/.ros/mattbot_experiments`.
   - An instance's obstacles **together** never cut a landmark off, so every task stays possible even if every obstacle stays blocked.
-  - Robots learn about an obstacle by seeing it.
+  - Robots learn about an obstacle by seeing it. An obstacle no robot saw while it was there is "not known" and does not enter the latency results (it never stood in the ledger).
   - Every landmark must be reachable by the planner; `generate` stops if one is not.
-- **Workload** (`experiment/orchestrator.py`): released tasks wait in a queue, and each goes to the nearest available robot. A robot out on a scout counts as available, and the task pre-empts the scout. The run ends when every task is done or has failed (`max_duration_s` caps it).
+- **Workload** (`experiment/orchestrator.py`): released tasks wait in a queue, and each goes to the nearest available robot. A robot out on a scout counts as available, and the task pre-empts the scout. The run ends when every task is done or has failed (`max_duration_s` caps it), or with `end_at_horizon` at `max_duration_s`.
+- **Robots pass through each other** in experiments (`robots_block: false`), as the real navigator and the ROS sim do; with blocking, two robots meeting head-on can livelock.
 - **Scouts drive** with `observe_scout_execute: true` (fast sim only). The robot drives to the viewpoint, looks, and goes back to where it started. It gives way to earlier checks while driving out, and a new task cancels it.
 - **Outputs:**
   - `runs.csv`, one row per run:
-    - tasks done / failed, makespan;
-    - fleet distance, split into task / detour / scout / return (`dist_*_m`, from odometry);
-    - checks by kind, detours and scouts;
+    - tasks done / failed / unfinished, makespan, mean task time (release to done);
+    - fleet distance, split into task / detour / scout / return (`dist_*_m`, from odometry), check trips per hour (`dist_check_m_per_h`);
+    - time shares of robot time: looking (turning to look and dwelling), on check trips, on tasks, idle;
+    - checks by kind, detours and scouts, plan failures;
     - obstacles known / dropped / censored, removal latency;
     - ghost-blocked time (how long removed obstacles stayed in the ledger).
-  - `obstacles.csv`, one row per obstacle per run (appear, removed, known, dropped, latency, which check dropped it), and `tasks.csv`.
+  - `obstacles.csv`, one row per obstacle per run (type, appear, removed, known, dropped, latency, which check dropped it: OPPORTUNISTIC / AT_GOAL / DETOUR / SCOUT / ORACLE), and `tasks.csv`.
   - `report.md` / `report.png`:
     - mean [95 % bootstrap CI] per condition;
     - paired distance differences to the first condition;
-    - removal latency with Kaplan-Meier for obstacles still in the ledger at the end.
+    - removal latency with Kaplan-Meier for obstacles still in the ledger at the end, overall and by obstacle type;
+    - the cost of checking (check trips, task time, time shares), the share of the oracle's saving in distance per task, and a benefit (ghost-blocked time saved) vs cost (check-trip distance) plot.
+  - `sweep` combines run directories as the levels of one factor (`sweep_<factor>.md` / `.png`).
 
-**Status:** the framework works end to end, but it is not yet ready for final results. A* is about 93 % of run time (about 2-4 s per long plan), so a pilot run takes about 17 min of wall time. See KNOWN_ISSUES part 12.
+**Speed:** a one-hour run with 3 robots takes about 30 s of wall time (A* is compiled, KNOWN_ISSUES 12.1).
 
 ## Results
 
