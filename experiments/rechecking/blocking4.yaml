@@ -1,0 +1,7 @@
+# Stakes sweep: three robots, four blocking obstacles (base: two).
+extends: main.yaml
+name: rechecking_blocking4
+obstacles:
+  types:
+    blocking: {count: 4}
+seeds: 30

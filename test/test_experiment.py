@@ -1,5 +1,6 @@
 """Experiments (mattbot_sim/experiment): instances, task orchestration, odometry, scout execution and the report."""
 
+import json
 import math
 import os
 
@@ -291,6 +292,26 @@ def test_evaluator_map_check_uses_the_planners_rule():
     assert Evaluator(FastParams(), CameraModel()).map_visible(CameraPose(2.05, 3.05, 0.0, 0.2), target)  # no map
 
 
+def test_evaluator_other_robots_occlude():
+    """Another robot in front of the object, or around the camera (robots pass through each other), never gives a
+    clear frame: the real evaluator sees it in depth (depth_occluded)."""
+    from mattbot_sim.fast.checker import Evaluator
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.perception import CameraModel
+    from observation_eval.evidence import ABSENT, UNCERTAIN
+
+    def verdict(robots):
+        ev = Evaluator(FastParams(), CameraModel())
+        ev.start("o1", (3.0, 0.0), 0.0, [])
+        ev.frame([], (0.0, 0.0, 0.0, 0.2), [], robots)
+        return ev.windows["o1"].frames[-1]
+
+    assert verdict([]).verdict == ABSENT  # nothing seen where the object was: clear
+    assert verdict([(1.5, 0.0, 0.2)]).verdict == UNCERTAIN  # a robot between camera and object
+    assert verdict([(0.05, 0.0, 0.2)]).verdict == UNCERTAIN  # the camera inside another robot's disc
+    assert verdict([(0.0, 2.0, 0.2)]).verdict == ABSENT  # a robot off to the side does not hide it
+
+
 class _FakeNav:
     def __init__(self, can_plan):
         self.mode, self.counters, self.can_plan, self.goal = "IDLE", {"plan_failures": 0}, can_plan, None
@@ -381,3 +402,49 @@ def test_detour_deadline_covers_the_planned_drive():
     for now, deadline, duration, n in seen:
         needed = duration + p.post_align_pause_s + p.observe_dwell_s * n
         assert deadline >= now + p.observe_detour_timeout_factor * needed + 20.0 - 1e-6
+
+
+def test_runner_saves_each_run_and_resumes(tmp_path, monkeypatch):
+    """runs/<condition>_seed<k>.json is written as each run finishes; running again skips those (an interrupted
+    experiment resumes), and a directory made from another spec is refused."""
+    import shutil
+    from collections import OrderedDict
+
+    from mattbot_sim.experiment import runner
+
+    spec_path = tmp_path / "pilot.yaml"
+    shutil.copy(SPEC, spec_path)
+    shutil.copy(os.path.join(PKG, "experiments", "landmarks_current_map.yaml"), tmp_path)
+    monkeypatch.setattr(runner, "prepare", lambda spec, out, seeds, cache: ({s: ({"seed": s}, "x.yaml") for s in seeds},))
+    calls = []
+
+    def fake_run_one(job):
+        _path, condition, seed = job[:3]
+        calls.append((condition, seed))
+        if len(calls) == 3 and fail[0]:
+            raise RuntimeError("interrupted")
+        return OrderedDict(condition=condition, seed=seed, x=1), [], []
+
+    monkeypatch.setattr(runner, "run_one", fake_run_one)
+    out = tmp_path / "out"
+    fail = [True]
+    with pytest.raises(RuntimeError):
+        runner.run(str(spec_path), str(out), conditions=["none", "detour"], seeds=[0, 1], jobs=1)
+    assert sorted(os.listdir(out / "runs")) == ["detour_seed0.json", "none_seed0.json"]  # the two that finished
+    fail[0] = False
+    calls.clear()
+    results = runner.run(str(spec_path), str(out), conditions=["none", "detour"], seeds=[0, 1], jobs=1)
+    assert sorted(calls) == [("detour", 1), ("none", 1)] and len(results) == 4  # only the missing runs
+    assert len(list(csv_rows(out / "runs.csv"))) == 4
+    prov = json.load(open(out / "provenance.json"))
+    assert len(prov["starts"]) == 2 and "mattbot_sim" in prov["starts"][0]["git"]
+    spec_path.write_text(spec_path.read_text().replace("seeds: 5", "seeds: 6"))
+    with pytest.raises(RuntimeError, match="different spec"):
+        runner.run(str(spec_path), str(out), conditions=["none"], seeds=[0], jobs=1)
+
+
+def csv_rows(path):
+    import csv
+
+    with open(path) as f:
+        return list(csv.DictReader(f))

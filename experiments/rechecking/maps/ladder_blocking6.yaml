@@ -1,0 +1,7 @@
+# Stakes sweep on ladder: three robots, six blocking obstacles (base: two).
+extends: ladder.yaml
+name: rechecking_ladder_blocking6
+obstacles:
+  types:
+    blocking: {count: 6}
+seeds: 30

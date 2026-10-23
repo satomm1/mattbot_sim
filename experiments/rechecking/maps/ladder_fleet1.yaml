@@ -1,0 +1,6 @@
+# Fleet-size sweep on ladder: one robot (the same per-robot workload as ladder.yaml).
+extends: ladder.yaml
+name: rechecking_ladder_fleet1
+robots:
+  - {id: 91, start: {x: 18.0, y: 6.0, theta: 0.00000}}
+seeds: 30

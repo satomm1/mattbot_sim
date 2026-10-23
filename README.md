@@ -382,6 +382,27 @@ python3 mattbot_sim/scripts/experiment.py sweep DIR_fleet1 DIR_main DIR_fleet5 -
     - removal latency with Kaplan-Meier for obstacles still in the ledger at the end, overall and by obstacle type;
     - the cost of checking (check trips, task time, time shares), the share of the oracle's saving in distance per task, and a benefit (ghost-blocked time saved) vs cost (check-trip distance) plot.
   - `sweep` combines run directories as the levels of one factor (`sweep_<factor>.md` / `.png`).
+  - `scripts/plot_results.py DIR ...` (one run directory per map) draws one figure per metric (`<stem>_know.png`, `_task_total`, `_task_mean`, `_dist`, `_dist_ns`: time to know, total and mean task time, total distance, distance without scouts): conditions on the x axis, a line per map, 95 % CIs. `--combined` also draws them as panels of one figure; the plotted values go to `<stem>.csv`.
+
+**Long batches that survive a lost session.** `scripts/run_batch.sh OUT SPEC.yaml ...` runs specs one after
+another into `OUT/<spec stem>/` and then compares them by map (`OUT/sweep_map.md`). Start it detached so that a
+closed terminal or a dropped Claude session does not stop it:
+
+```bash
+setsid nohup mattbot_sim/scripts/run_batch.sh OUT main.yaml maps/grid_office.yaml ... > /dev/null 2>&1 < /dev/null &
+cat OUT/STATUS; ls OUT/main/runs | wc -l     # progress (running / done / failed); OUT/batch.log has everything
+kill $(cat OUT/batch.pid)                    # stop it
+```
+
+Every finished run is saved at once (`OUT/<spec>/runs/<condition>_seed<k>.json`), and `experiment.py run` skips runs
+already there, so after a crash, a kill or a container restart the same command resumes where it stopped. A directory
+made from a different spec is refused. `provenance.json` records each package's git commit and whether it had
+uncommitted changes, for every (re)start.
+
+**Share of the oracle's saving** is only given when the oracle's own saving is known to within +-50 % (otherwise
+`n/s`): on a map where every blockage is cheap it is a ratio of noise, because distance per task also varies
+between conditions when small timing differences change which robot gets which task. Ghost-blocked time and the
+time to drop an obstacle do not have this problem.
 
 **Speed:** a one-hour run with 3 robots takes about 30 s of wall time (A* is compiled, KNOWN_ISSUES 12.1).
 

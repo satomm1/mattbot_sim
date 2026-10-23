@@ -1,0 +1,7 @@
+# Stakes sweep on grid_office: three robots, six blocking obstacles (base: two).
+extends: grid_office.yaml
+name: rechecking_grid_office_blocking6
+obstacles:
+  types:
+    blocking: {count: 6}
+seeds: 30

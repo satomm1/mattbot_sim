@@ -1,0 +1,6 @@
+# Workload sweep on grid_office: three robots, light (about 20 % of the time on tasks).
+extends: grid_office.yaml
+name: rechecking_grid_office_light
+tasks:
+  release_rate_per_robot_per_min: 0.08
+seeds: 30

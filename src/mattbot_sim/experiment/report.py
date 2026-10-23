@@ -8,8 +8,13 @@ condition on the same seed, with 95 % bootstrap confidence intervals.
 Per obstacle type (spec obstacles.types), the latency table is repeated by type. The cost of checking: distance
 driven for detours / scouts per hour, mean task time, and how the robots' time was spent. With an `oracle`
 condition (the ledger drops an obstacle the moment it is removed), each condition's saving in distance per task
-over the baseline is also given as a share of the oracle's. The trade-off plot shows, per condition, the
-ghost-blocked time saved over the baseline against the distance spent on check trips.
+over the baseline is also given as a share of the oracle's.
+Stale-obstacle cost (importance-weighted): the extra driving stale obstacles cause, per run and hour,
+    sum over obstacles of ghost_s x I_o x trip rate (completed tasks per second of the run),
+i.e. what the robots' value model trades against the driving spent on checks. Obstacles that block nothing (I_o = 0:
+on_route, most visible ones) cost nothing here, however long they stay in the ledger; ghost-blocked time still counts
+them (ledger accuracy). The trade-off plot shows this saving over the baseline against the check-trip driving, both in
+m per hour, with the break-even line.
 """
 
 import os
@@ -31,6 +36,51 @@ def mean_ci(values, rng=None, n=BOOT):
     return float(v.mean()), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
 
 
+def add_fleet_metrics(runs, tasks=None):
+    """Per run: total distance with and without scout driving (out to scout viewpoints and back; detours count as
+    the robot's own trip), and task times from tasks.csv: total and mean release -> arrival over completed tasks, and
+    its split into waiting for a robot (release -> assigned) and service (assigned -> arrival)."""
+    runs = runs.copy()
+    if "dist_total_m" in runs.columns:
+        scout = runs.get("dist_scout_m", 0.0) + runs.get("dist_return_m", 0.0)
+        runs["dist_no_scout_m"] = runs["dist_total_m"] - scout
+    if tasks is not None and len(tasks):
+        done = tasks[tasks["status"] == "done"].copy()
+        done["task_s"] = done["done_s"] - done["release_s"]
+        done["wait_s"] = done["assigned_s"] - done["release_s"]
+        done["service_s"] = done["done_s"] - done["assigned_s"]
+        g = done.groupby(["condition", "seed"])
+        stats = {"task_time_total_s": g["task_s"].sum(), "task_time_mean_s": g["task_s"].mean(),
+                 "wait_time_mean_s": g["wait_s"].mean(), "service_time_mean_s": g["service_s"].mean()}
+        for col, ser in stats.items():
+            runs[col] = [float(ser.get((c, s), float("nan"))) for c, s in zip(runs["condition"], runs["seed"])]
+    return runs
+
+
+def add_stale_cost(runs, obs):
+    """runs["stale_cost_m_per_h"]: sum of ghost_s x I_o x trip rate over the run's obstacles, per hour (see the module
+    docstring). Unchanged if the columns are missing."""
+    if not {"ghost_s", "I_o"} <= set(obs.columns) or "run_s" not in runs.columns:
+        return runs
+    weighted = (obs["ghost_s"].fillna(0.0) * obs["I_o"].fillna(0.0)).groupby([obs["condition"], obs["seed"]]).sum()
+    out = []
+    for _i, r in runs.iterrows():
+        run_s = float(r["run_s"]) or float("nan")
+        rate = float(r["tasks_done"]) / run_s  # trips per second
+        out.append(float(weighted.get((r["condition"], r["seed"]), 0.0)) * rate / (run_s / 3600.0))
+    runs = runs.copy()
+    runs["stale_cost_m_per_h"] = out
+    return runs
+
+
+def share_ok(saving_ci):
+    """Whether a share of a saving (mean, lo, hi) is meaningful: the saving is known to within +-50 % (lo > mean / 2).
+    A share of a small, noisy saving (a map where every blockage is cheap) is a ratio of noise: distance per task
+    also varies between conditions because small timing differences change which robot gets which task."""
+    m, lo, _hi = saving_ci
+    return bool(np.isfinite(lo) and m > 0 and lo > 0.5 * m)
+
+
 def kaplan_meier(times, censored):
     """Survival curve of "still in the ledger": ([t], [S(t)]) at each drop time."""
     t = np.asarray(times, dtype=float)
@@ -48,6 +98,34 @@ def kaplan_meier(times, censored):
             ys.append(s)
         at_risk -= int(here.sum())
     return xs, ys
+
+
+RMST_CAP_S = 1800.0  # restricted mean time to know: obstacles still in the ledger are counted up to this
+
+
+def restricted_mean(times, censored, cap=RMST_CAP_S):
+    """Restricted mean time (area under the Kaplan-Meier curve up to cap): the average time to know an obstacle is
+    gone, counting each obstacle's full time (an obstacle still in the ledger at the end counts at least its time
+    so far; all times are capped at cap). Unlike the median, every obstacle's change counts by its size."""
+    if len(times) == 0:
+        return float("nan")
+    xs, ys = kaplan_meier(times, censored)
+    xs, ys = list(xs) + [cap], list(ys) + [ys[-1]]
+    return float(sum(ys[i] * max(min(xs[i + 1], cap) - min(xs[i], cap), 0.0) for i in range(len(xs) - 1)))
+
+
+def restricted_mean_ci(times, censored, rng=None, n=500, cap=RMST_CAP_S):
+    """(restricted mean, lo, hi) with a 95 % bootstrap over obstacles."""
+    t = np.asarray(times, dtype=float)
+    c = np.asarray(censored, dtype=bool)
+    if len(t) < 2:
+        return restricted_mean(t, c, cap), float("nan"), float("nan")
+    rng = rng or np.random.default_rng(0)
+    boots = []
+    for _ in range(n):
+        i = rng.integers(0, len(t), len(t))
+        boots.append(restricted_mean(t[i], c[i], cap))
+    return restricted_mean(t, c, cap), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
 
 
 def km_median(times, censored):
@@ -71,6 +149,8 @@ def report(run_dir, baseline=None, latency_baseline=None):
 
     runs = pd.read_csv(os.path.join(run_dir, "runs.csv"))
     obs = pd.read_csv(os.path.join(run_dir, "obstacles.csv"))
+    tasks_path = os.path.join(run_dir, "tasks.csv")
+    runs = add_fleet_metrics(add_stale_cost(runs, obs), pd.read_csv(tasks_path) if os.path.exists(tasks_path) else None)
     conditions = list(dict.fromkeys(runs["condition"]))
     baseline = baseline or conditions[0]
     latency_baseline = latency_baseline or next((c for c in conditions if c != baseline), baseline)
@@ -149,6 +229,63 @@ def report(run_dir, baseline=None, latency_baseline=None):
                     ("%.0f" % km_median(times, cens)) if len(o) else "-",
                     ", ".join("%s %d" % (k, v) for k, v in by.items()) or "-"))
 
+    # ---- Fleet summary: time to know, distance, task time ----
+    if "task_time_total_s" in runs.columns:
+        lines += ["", "## Fleet summary (per run; mean [95% CI])", "",
+                  "Time to know an obstacle is gone: from its removal until the ledger drops it. Average: restricted mean "
+                  "(area under the Kaplan-Meier curve up to 1800 s, 95%% bootstrap over obstacles): every obstacle's time "
+                  "counts, one still in the ledger at the end at least its time so far; the KM median is given for "
+                  "reference (it only counts obstacles on either side of the middle). Distance: the whole fleet; without "
+                  "scouts leaves out "
+                  "the driving out to scout viewpoints and back. Task time: release -> arrival, summed and averaged over "
+                  "completed tasks, split into waiting for a robot and service (assigned -> arrival).", "",
+                  "| condition | time to know: average (s) | time to know: KM median (s) | total distance (m) | distance without scouts (m) | tasks done | total task time (s) | mean task time (s) | mean wait (s) | mean service (s) |",
+                  "|---|---|---|---|---|---|---|---|---|---|"]
+        for c in conditions:
+            r = runs[runs["condition"] == c]
+            o = obs[(obs["condition"] == c) & (obs["latency_s"].notna() | (obs["censored"] == 1))]
+            times = np.where(o["censored"] == 1, o["ghost_s"], o["latency_s"]).astype(float)
+            cens = (o["censored"] == 1).to_numpy()
+            med = km_median(times, cens) if len(o) else float("nan")
+            avg = restricted_mean_ci(times, cens, rng) if len(o) else (float("nan"),) * 3
+            lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                c, _fmt(*avg, digits=0), "-" if np.isnan(med) else ("never" if np.isinf(med) else "%.0f" % med),
+                _fmt(*mean_ci(r["dist_total_m"], rng), digits=0),
+                _fmt(*mean_ci(r["dist_no_scout_m"], rng), digits=0), _fmt(*mean_ci(r["tasks_done"], rng)),
+                _fmt(*mean_ci(r["task_time_total_s"], rng), digits=0), _fmt(*mean_ci(r["task_time_mean_s"], rng), digits=1),
+                _fmt(*mean_ci(r["wait_time_mean_s"], rng), digits=1), _fmt(*mean_ci(r["service_time_mean_s"], rng), digits=1)))
+        bsum = runs[runs["condition"] == baseline].set_index("seed")
+        lines += ["", "Paired difference to `%s` on the same seed (negative = less):" % baseline, "",
+                  "| condition | total distance (m) | distance without scouts (m) | total task time (s) | mean task time (s) | mean service (s) |",
+                  "|---|---|---|---|---|---|"]
+        for c in conditions:
+            if c == baseline:
+                continue
+            r = runs[runs["condition"] == c].set_index("seed")
+            ss = sorted(set(r.index) & set(bsum.index))
+            d = lambda col: _fmt(*mean_ci([r.loc[s, col] - bsum.loc[s, col] for s in ss], rng),
+                                 digits=0 if "total" in col or "dist" in col else 1)
+            lines.append("| %s | %s | %s | %s | %s | %s |" % (c, d("dist_total_m"), d("dist_no_scout_m"),
+                                                             d("task_time_total_s"), d("task_time_mean_s"),
+                                                             d("service_time_mean_s")))
+
+    # ---- Stale-obstacle cost ----
+    if "stale_cost_m_per_h" in runs.columns and "dist_check_m_per_h" in runs.columns:
+        lines += ["", "## Stale-obstacle cost (importance-weighted; m of extra driving per hour, fleet)", "",
+                  "ghost_s x I_o x trip rate summed over the run's obstacles (obstacles that block nothing cost nothing); "
+                  "saved and net are paired by seed (net = saved - check trips; > 0: checking pays for itself).", "",
+                  "| condition | stale cost (m/h) | saved vs %s (m/h) | check trips (m/h) | net saving (m/h) |" % baseline,
+                  "|---|---|---|---|---|"]
+        bs = runs[runs["condition"] == baseline].set_index("seed")
+        for c in conditions:
+            r = runs[runs["condition"] == c].set_index("seed")
+            seeds = sorted(set(r.index) & set(bs.index))
+            saved = [bs.loc[s, "stale_cost_m_per_h"] - r.loc[s, "stale_cost_m_per_h"] for s in seeds]
+            net = [sv - r.loc[s, "dist_check_m_per_h"] for sv, s in zip(saved, seeds)]
+            lines.append("| %s | %s | %s | %s | %s |" % (
+                c, _fmt(*mean_ci(r["stale_cost_m_per_h"], rng)), "-" if c == baseline else _fmt(*mean_ci(saved, rng)),
+                _fmt(*mean_ci(r["dist_check_m_per_h"], rng)), "-" if c == baseline else _fmt(*mean_ci(net, rng))))
+
     # ---- Cost ----
     if "dist_check_m_per_h" in runs.columns:
         lines += ["", "## Cost of checking (fleet, per run; mean [95% CI])", "",
@@ -169,7 +306,9 @@ def report(run_dir, baseline=None, latency_baseline=None):
     if "oracle" in conditions and baseline != "oracle":
         orc = runs[runs["condition"] == "oracle"].set_index("seed")
         lines += ["", "## Share of the oracle's saving (distance per task, paired by seed)", "",
-                  "(%s - condition) / (%s - oracle), from the mean paired differences; 95%% bootstrap over seeds." % (
+                  "(%s - condition) / (%s - oracle), from the mean paired differences; 95%% bootstrap over seeds. "
+                  "n/s: the oracle's own saving is not known to within +-50 %% (its CI's lower end is below half its mean), "
+                  "so a share would be a ratio of noise." % (
                       baseline, baseline), "",
                   "| condition | saving (m per task) | oracle saving (m per task) | share of oracle |", "|---|---|---|---|"]
         for c in conditions:
@@ -187,9 +326,10 @@ def report(run_dir, baseline=None, latency_baseline=None):
                 boots = save[idx].mean(axis=1) / full[idx].mean(axis=1)
             boots = boots[np.isfinite(boots)]
             lo, hi = (np.percentile(boots, [2.5, 97.5]) if len(boots) > 1 else (float("nan"), float("nan")))
-            lines.append("| %s | %s | %s | %s |" % (c, _fmt(*mean_ci(save, rng), digits=2),
-                                                   _fmt(*mean_ci(full, rng), digits=2),
-                                                   _fmt(100 * share, 100 * lo, 100 * hi, digits=0) + " %"))
+            full_ci = mean_ci(full, rng)
+            share_txt = (_fmt(100 * share, 100 * lo, 100 * hi, digits=0) + " %") if share_ok(full_ci) else "n/s"
+            lines.append("| %s | %s | %s | %s |" % (c, _fmt(*mean_ci(save, rng), digits=2), _fmt(*full_ci, digits=2),
+                                                   share_txt))
 
     text = "\n".join(lines) + "\n"
     with open(os.path.join(run_dir, "report.md"), "w") as f:
@@ -199,7 +339,8 @@ def report(run_dir, baseline=None, latency_baseline=None):
 
 
 def tradeoff_points(runs, conditions, baseline, rng=None):
-    """Per condition: (check trips m/h mean, lo, hi), (ghost-blocked time saved over baseline per run, lo, hi)."""
+    """Per condition: (check trips m/h mean, lo, hi), (stale-obstacle cost saved over baseline, m/h, lo, hi), or the
+    ghost-blocked time saved (s per run) without stale_cost_m_per_h."""
     rng = rng or np.random.default_rng(0)
     base = runs[runs["condition"] == baseline].set_index("seed")
     out = {}
@@ -208,7 +349,8 @@ def tradeoff_points(runs, conditions, baseline, rng=None):
             continue
         r = runs[runs["condition"] == c].set_index("seed")
         seeds = sorted(set(r.index) & set(base.index))
-        saved = [base.loc[s, "ghost_s"] - r.loc[s, "ghost_s"] for s in seeds]
+        col = "stale_cost_m_per_h" if "stale_cost_m_per_h" in r.columns else "ghost_s"
+        saved = [base.loc[s, col] - r.loc[s, col] for s in seeds]
         cost = r["dist_check_m_per_h"] if "dist_check_m_per_h" in r.columns else r["dist_detour_m"] * 0
         out[c] = (mean_ci(cost, rng), mean_ci(saved, rng))
     return out
@@ -238,8 +380,14 @@ def _plots(run_dir, runs, conditions, baseline, curves):
         ax.annotate(c, (cm, sm), textcoords="offset points", xytext=(6, 6), fontsize=9)
     ax.axhline(0.0, color="k", lw=0.8)
     ax.set_xlabel("distance on check trips (m per hour, fleet)")
-    ax.set_ylabel("ghost-blocked time saved vs %s (s per run)" % baseline)
-    ax.set_title("Benefit vs cost (mean, 95% CI)")
+    if "stale_cost_m_per_h" in runs.columns:
+        lim = max([1.0] + [v for c in ax.get_lines() for v in list(c.get_xdata()) + list(c.get_ydata())
+                          if np.isfinite(v)])
+        ax.plot([0, lim], [0, lim], "k:", lw=0.8, label="break-even")
+        ax.set_ylabel("stale-obstacle driving saved vs %s (m per hour)" % baseline)
+    else:
+        ax.set_ylabel("ghost-blocked time saved vs %s (s per run)" % baseline)
+    ax.set_title("Benefit vs cost (mean, 95% CI; above the dotted line: pays for itself)")
     ax.grid(True, alpha=0.3)
 
     ax = axes[1, 0]

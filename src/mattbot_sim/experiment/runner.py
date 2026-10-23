@@ -1,6 +1,9 @@
 """Run an experiment: every (condition, seed) on the seed's instance, in parallel processes.
 
 Writes to the output directory:
+  runs/<condition>_seed<k>.json   each run's results as soon as it finishes; a run already there is not run again,
+                                  so an interrupted experiment resumes where it stopped (the same command again)
+  provenance.json                 git commit and uncommitted changes of every package, command, start times
   instances/seed<k>.json, .yaml   the instance and its FastSim scenario (shared by every condition)
   runs.csv                        one row per run: condition, seed, work, distance, checks, obstacle summary
   obstacles.csv                   one row per obstacle per run: when it appeared / was removed / known / dropped
@@ -9,11 +12,13 @@ Writes to the output directory:
 """
 
 import csv
+import hashlib
 import json
 import math
 import multiprocessing
 import os
 import shutil
+import sys
 import time
 from collections import OrderedDict
 
@@ -183,26 +188,106 @@ def write_csv(path, rows):
         w.writerows(rows)
 
 
+SRC = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
+PROVENANCE_REPOS = ("mattbot_sim", "mattbot_navigation", "mattbot_dds", "mattbot_image_detection", "path_planning")
+
+
+def provenance():
+    """{repo: {commit, dirty}} of the packages the fast sim runs (git), for provenance.json."""
+    import subprocess
+
+    out = {}
+    for repo in PROVENANCE_REPOS:
+        path = os.path.join(SRC, repo)
+        try:
+            commit = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                    timeout=10).stdout.strip()
+            dirty = subprocess.run(["git", "-C", path, "status", "--porcelain", "--untracked-files=no"],
+                                   capture_output=True, text=True, timeout=10).stdout.strip()
+            out[repo] = {"commit": commit or None, "dirty": bool(dirty)}
+        except (OSError, subprocess.SubprocessError):
+            out[repo] = {"commit": None, "dirty": None}
+    return out
+
+
+def _spec_fingerprint(spec):
+    from mattbot_sim.experiment.spec import read_spec_dict
+
+    return hashlib.sha256(json.dumps(read_spec_dict(spec.path), sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _run_file(out_dir, condition, seed):
+    return os.path.join(out_dir, "runs", "%s_seed%d.json" % (condition, seed))
+
+
+def _save_run(out_dir, res):
+    """One run's (row, obstacles, tasks), written atomically (a half-written file is never read back)."""
+    row = res[0]
+    path = _run_file(out_dir, row["condition"], int(row["seed"]))
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"row": row, "obstacles": res[1], "tasks": res[2]}, f)
+    os.replace(tmp, path)
+
+
+def _load_run(path):
+    with open(path) as f:
+        d = json.load(f)
+    return OrderedDict(d["row"]), [OrderedDict(o) for o in d["obstacles"]], [OrderedDict(t) for t in d["tasks"]]
+
+
+def _write_provenance(out_dir, spec, fingerprint):
+    """provenance.json: refuses to resume into a directory made from a different spec (mixed results)."""
+    path = os.path.join(out_dir, "provenance.json")
+    old = None
+    if os.path.exists(path):
+        with open(path) as f:
+            old = json.load(f)
+        if old.get("spec_fingerprint") != fingerprint:
+            raise RuntimeError("%s holds runs of a different spec (fingerprint %s, now %s); use a new --out" % (
+                out_dir, old.get("spec_fingerprint"), fingerprint))
+    starts = (old or {}).get("starts", [])
+    starts.append({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "argv": list(sys.argv), "git": provenance()})
+    with open(path, "w") as f:
+        json.dump({"spec": spec.path, "spec_fingerprint": fingerprint, "starts": starts}, f, indent=1)
+
+
 def run(spec_path, out_dir, conditions=None, seeds=None, jobs=1, cache_dir=DEFAULT_CACHE_DIR, progress=None):
+    """Every (condition, seed) run not yet in out_dir/runs, then the CSVs over all of them. Run it again with the
+    same arguments to resume an interrupted experiment."""
     spec = load_spec(spec_path)
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.join(out_dir, "runs"), exist_ok=True)
+    _write_provenance(out_dir, spec, _spec_fingerprint(spec))
     copy_spec(spec, out_dir)
     seeds = spec.seeds if seeds is None else seeds
     conditions = list(spec.conditions) if conditions is None else conditions
     instances, *_ = prepare(spec, out_dir, seeds, cache_dir)
-    work = [(spec.path, c, s, instances[s][1], instances[s][0], cache_dir) for s in seeds for c in conditions]
     results = []
-    if jobs > 1:
+    work = []
+    for s in seeds:
+        for c in conditions:
+            path = _run_file(out_dir, c, s)
+            if os.path.exists(path):
+                results.append(_load_run(path))  # finished before an interruption
+            else:
+                work.append((spec.path, c, s, instances[s][1], instances[s][0], cache_dir))
+    total, done = len(results) + len(work), len(results)
+    if jobs > 1 and work:
         with multiprocessing.get_context("fork").Pool(jobs) as pool:
-            for k, res in enumerate(pool.imap_unordered(run_one, work)):
+            for res in pool.imap_unordered(run_one, work):
+                _save_run(out_dir, res)
                 results.append(res)
+                done += 1
                 if progress:
-                    progress(k + 1, len(work), res[0])
+                    progress(done, total, res[0])
     else:
-        for k, job in enumerate(work):
-            results.append(run_one(job))
+        for job in work:
+            res = run_one(job)
+            _save_run(out_dir, res)
+            results.append(res)
+            done += 1
             if progress:
-                progress(k + 1, len(work), results[-1][0])
+                progress(done, total, res[0])
     order = {c: i for i, c in enumerate(conditions)}
     results.sort(key=lambda r: (r[0]["seed"], order[r[0]["condition"]]))
     write_csv(os.path.join(out_dir, "runs.csv"), [r[0] for r in results])

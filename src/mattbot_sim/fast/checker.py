@@ -23,8 +23,8 @@ from navigation_utils.observation_policy import (
 from navigation_utils.viewpoints import LOS_MIN_CLEAR, blocking_mask, compute_viewshed, nearby_blockers, \
     width_line_of_sight_counts
 from observation_eval.evidence import (
-    OUTCOME_ABSENT, OUTCOME_PRESENT, CameraPose, Detection, EvalParams, Intrinsics, Target, frame_verdict,
-    match_known, window_outcome,
+    ABSENT, OUTCOME_ABSENT, OUTCOME_PRESENT, UNCERTAIN, CameraPose, Detection, EvalParams, FrameEvidence, Intrinsics,
+    Target, frame_verdict, match_known, window_outcome,
 )
 
 RECOMPUTE_MOVE_M = 0.2  # observation_planner: recompute a viewshed if the object moved further
@@ -304,18 +304,27 @@ class Evaluator:
     def abort(self, object_id):
         self.windows.pop(object_id, None)
 
-    def frame(self, detections, cam_pose, beliefs):
-        """One detector frame (detections: mattbot_sim.perception.Detection, map frame)."""
+    def frame(self, detections, cam_pose, beliefs, robots=()):
+        """One detector frame (detections: mattbot_sim.perception.Detection, map frame). robots: the other robots'
+        discs [(x, y, radius)]. They hide what is behind them but are never detected, and this evaluator has no
+        depth; the real evaluator sees them as depth pixels nearer than the object (depth_occluded, UNCERTAIN), so
+        here they count as occluders, and a camera inside another robot's disc (robots pass through each other)
+        sees nothing conclusive."""
         if not self.windows:
             return
         dets = [Detection(d.class_name, d.x, d.y, d.width) for d in detections]
         cam = CameraPose(*cam_pose)
         objects = {b.object_id: (b.class_name, b.x, b.y, b.width) for b in beliefs}
+        robot_blockers = [(x, y, 2.0 * r) for x, y, r in robots]
+        inside = any(math.hypot(cam.x - x, cam.y - y) < r for x, y, r in robots)
         for target_id, w in self.windows.items():
             others = {oid: o for oid, o in objects.items() if oid != target_id}
-            w.frames.append(frame_verdict(dets, w.target, cam, self.intrinsics, w.params, localization_ok=True,
-                                          known_blockers=[(x, y, wd) for _c, x, y, wd in others.values()],
-                                          map_visible=self.map_visible(cam, w.target)))
+            ev = frame_verdict(dets, w.target, cam, self.intrinsics, w.params, localization_ok=True,
+                               known_blockers=[(x, y, wd) for _c, x, y, wd in others.values()] + robot_blockers,
+                               map_visible=self.map_visible(cam, w.target))
+            if inside and ev.verdict == ABSENT:
+                ev = FrameEvidence(UNCERTAIN, "robot_occluded", [])
+            w.frames.append(ev)
             for oid, matches in match_known(dets, others, w.params).items():
                 entry = w.others.setdefault(oid, [[], 0])
                 entry[0].extend(matches)

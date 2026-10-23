@@ -1,0 +1,6 @@
+# Fleet-size sweep on grid_office: one robot (the same per-robot workload as grid_office.yaml).
+extends: grid_office.yaml
+name: rechecking_grid_office_fleet1
+robots:
+  - {id: 91, start: {x: 12.0, y: 4.0, theta: 0.00000}}
+seeds: 30

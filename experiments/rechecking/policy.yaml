@@ -1,0 +1,15 @@
+# Policy sweep: how readily detours and scouts are taken. The base conditions are the default level
+# (n_trips 5, detours up to 15 m, scouts up to 30 m); _n2 is conservative, _n10 aggressive, _n20 very aggressive.
+extends: main.yaml
+name: rechecking_policy
+conditions:
+  detour_n2: {observe: true, observe_detour: true, observe_detour_n_trips: 2}
+  scout_n2: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true,
+             observe_detour_n_trips: 2, observe_scout_n_trips: 2}
+  detour_n10: {observe: true, observe_detour: true, observe_detour_n_trips: 10, observe_max_detour_m: 25}
+  scout_n10: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true,
+              observe_detour_n_trips: 10, observe_max_detour_m: 25, observe_scout_n_trips: 10, observe_max_scout_m: 45}
+  detour_n20: {observe: true, observe_detour: true, observe_detour_n_trips: 20, observe_max_detour_m: 40}
+  scout_n20: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true,
+              observe_detour_n_trips: 20, observe_max_detour_m: 40, observe_scout_n_trips: 20, observe_max_scout_m: 60}
+seeds: 30

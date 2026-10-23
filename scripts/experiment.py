@@ -147,7 +147,7 @@ def main():
     p.set_defaults(func=cmd_run)
     p = sub.add_parser("sweep")
     p.add_argument("dirs", nargs="+")
-    p.add_argument("--factor", default="", help="robots, rate_per_robot_per_min (default: the one that varies)")
+    p.add_argument("--factor", default="", help="map, robots, rate_per_robot_per_min, blocking, lifetime_s (default: the one that varies)")
     p.add_argument("--out", default="", help="default: the first directory")
     p.set_defaults(func=cmd_sweep)
     p = sub.add_parser("report")

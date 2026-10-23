@@ -1,0 +1,6 @@
+# Stakes sweep on grid_office: three robots, obstacles live 2-7 min (base: 5-20 min); they still appear in the first 15 min.
+extends: grid_office.yaml
+name: rechecking_grid_office_short_life
+obstacles:
+  lifetime_s: [120, 420]
+seeds: 30

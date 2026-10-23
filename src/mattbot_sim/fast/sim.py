@@ -224,7 +224,8 @@ class FastSim:
             self.world.observer = None
             for cls, x, y, w in r.mapper.frame(self.now, r.nav.mode, dets):
                 self.confirm(r, cls, x, y, w)
-            r.evaluator.frame(dets, (cam.x, cam.y, r.pose.theta, CAMERA_OFFSET[2]), beliefs)
+            robots = [disc for rid, disc in self.world.robot_discs.items() if rid != r.id]
+            r.evaluator.frame(dets, (cam.x, cam.y, r.pose.theta, CAMERA_OFFSET[2]), beliefs, robots)
 
     def every_second(self):
         beliefs = self.beliefs()
