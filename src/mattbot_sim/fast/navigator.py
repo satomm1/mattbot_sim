@@ -20,7 +20,7 @@ from mattbot_sim.kinematics import Pose2D, step, wrap_angle
 from navigation_utils import plan_start_heading
 from dds_utils.intents import Intent
 from navigation_utils.observation_policy import (
-    AT_GOAL, AT_START, DETOUR, OPPORTUNISTIC, REPLAN, RETURN, SCOUT, check_etas, yields_to,
+    AT_GOAL, AT_START, DETOUR, OPPORTUNISTIC, REPLAN, RETURN, SCOUT, check_etas, scout_deadline, yields_to,
 )
 from navigation_utils.trackers import HeadingController, PoseController
 
@@ -72,7 +72,8 @@ class FastNavigator:
         self.intents_dirty = True
         self.intents_sent_at = -1e9
         self.detour = None
-        self.scout = None  # {"entry", "home", "returning", "round_trip"} while a scout runs (observe_scout_execute)
+        self.scout = None  # {"entry", "home", "returning", "round_trip", "goal", "deadline"} (observe_scout_execute)
+        self.last_goal_t = 0.0  # last sim time a goal was received or active (localize_and_navigate _last_goal_t)
         self.observe_stop = None
         self.observe_queue = []
         self.observe_target = None
@@ -138,6 +139,7 @@ class FastNavigator:
 
     def set_goal(self, x, y, theta):
         """/external_goal (goal_callback)."""
+        self.last_goal_t = self.sim.now
         goal = (float(x), float(y), float(theta))
         if goal == self.goal and self.scout is None:
             if self.mode == "IDLE":
@@ -154,6 +156,7 @@ class FastNavigator:
 
     def stop(self):
         """/stop."""
+        self.last_goal_t = self.sim.now
         self.cancel_detour("stop")
         if self.scout is not None:
             self.cancel_scout("stop")
@@ -176,6 +179,9 @@ class FastNavigator:
         if start is None:
             if self.detour is not None:
                 self.abandon_detour("no free start cell")
+            elif self.scout is not None:
+                self.switch_mode("IDLE")
+                self.abandon_scout("no free start cell")
             else:
                 self.switch_mode("IDLE")
             return
@@ -187,8 +193,9 @@ class FastNavigator:
                 self.abandon_detour("no path to the viewpoint")
                 return
             if self.scout is not None:
-                self.log("Scout abandoned (no path)")
-                self.scout = None
+                self.switch_mode("IDLE")
+                self.abandon_scout("no path to the viewpoint" if self.scout_outbound() else "no path home")
+                return
             self.log("Planning failed; clearing the goal")
             self.goal = None
             self.switch_mode("IDLE")
@@ -196,6 +203,8 @@ class FastNavigator:
         if plan.short:
             if self.detour is not None:
                 self.arrive_at_detour_viewpoint()
+            elif self.scout_outbound():
+                self.arrive_at_scout_viewpoint()  # already (almost) at the viewpoint: look from here (not park)
             else:
                 # localize_and_navigate.replan: park at the end of this short path with the goal heading
                 end = plan.path[-1] if plan.path else (g[0], g[1])
@@ -234,8 +243,8 @@ class FastNavigator:
 
     def request_observation_stops(self):
         self.stops = []
-        if not self.p.observe or self.detour is not None or self.scout_outbound():
-            return  # no stops on the way to a viewpoint
+        if not self.p.observe or self.detour is not None or self.scout is not None:
+            return  # no stops on the way to a viewpoint, nor on a scout's way back
         first_plan = self.goal != self.observe_goal
         if first_plan:
             self.observe_goal = self.goal
@@ -522,7 +531,7 @@ class FastNavigator:
         self.switch_mode("IDLE")
         self.replan()
 
-    # ---------- Scouts (observe_scout_execute; no robot counterpart yet, KNOWN_ISSUES 10.1) ----------
+    # ---------- Scouts (observe_scout_execute; localize_and_navigate "Scouts", ~observe_scout_execute) ----------
 
     def scout_outbound(self):
         return self.scout is not None and not self.scout["returning"]
@@ -537,12 +546,25 @@ class FastNavigator:
         stop = StopRequest(SCOUT, RETURN, -1, vx, vy, option["heading"], list(option["object_ids"]),
                            [tuple(t) for t in option["targets"]], option["cost_s"], option["to_view_s"])
         entry = {"idx": 0, "t": 0.0, "stop": stop, "detour": False, "eta": self.sim.now + option["to_view_s"]}
+        goal = (float(vx), float(vy), float(option["heading"]))
+        n = len(stop.object_ids)
         self.scout = {"entry": entry, "home": (self.pose.x, self.pose.y, self.pose.theta), "returning": False,
-                      "round_trip": bool(option.get("round_trip", True))}
+                      "round_trip": bool(option.get("round_trip", True)), "goal": goal,
+                      "deadline": scout_deadline(self.sim.now, stop.to_view_s, n, self.p.observe_dwell_s,
+                                                 self.p.observe_detour_timeout_factor)}
+        # A scout is a goal of its own: every object may be checked once on it, and the next real goal starts fresh
+        self.observed_this_goal = set()
+        self.detour_skipped = set()
+        self.observe_goal = None
         self.log("Scout to (%.2f, %.2f) to check %s (est. %.0f s)", vx, vy, "+".join(stop.object_ids), stop.cost_s)
-        self.goal = (float(vx), float(vy), float(option["heading"]))
+        self.goal = goal
         self.switch_mode("IDLE")
+        plan = self.plan
         self.replan()
+        if self.scout_outbound() and self.plan is not plan:
+            self.scout["deadline"] = scout_deadline(
+                self.sim.now, stop.to_view_s, n, self.p.observe_dwell_s, self.p.observe_detour_timeout_factor,
+                plan_s=self.duration, align_s=self.p.post_align_pause_s, previous=self.scout["deadline"])
 
     def arrive_at_scout_viewpoint(self):
         s = self.scout["entry"]["stop"]
@@ -555,9 +577,15 @@ class FastNavigator:
             self.end_scout()
 
     def end_scout(self):
-        """After the look (or giving way): go back to where the scout started, or stay here."""
+        """After the look (or giving way, or giving up on the way out): go back to where the scout started, or stay
+        here."""
+        if self.scout is None:
+            return
+        self.viewpoint_approach = None
+        self.intents_dirty = True
         if self.scout["round_trip"]:
             self.scout["returning"] = True
+            self.scout["goal"] = self.scout["home"]
             self.goal = self.scout["home"]
             self.switch_mode("IDLE")
             self.replan()
@@ -566,10 +594,26 @@ class FastNavigator:
             self.goal = None
             self.switch_mode("IDLE")
 
+    def abandon_scout(self, reason):
+        """localize_and_navigate._abandon_scout: on the way out, drive back; on the way back, stay here."""
+        if self.scout is None:
+            return
+        if self.scout_outbound():
+            self.log("Scout abandoned (%s); returning", reason)
+            self.end_scout()
+            return
+        self.log("Scout return failed (%s); staying here", reason)
+        self.scout = None
+        self.viewpoint_approach = None
+        self.goal = None
+        self.switch_mode("IDLE")
+
     def cancel_scout(self, reason):
         if self.scout is not None:
             self.log("Scout cancelled (%s)", reason)
             self.scout = None
+            self.viewpoint_approach = None
+            self.intents_dirty = True
 
     def cancel_detour(self, reason):
         if self.detour is not None:
@@ -599,6 +643,8 @@ class FastNavigator:
     def step(self, dt):
         """One 10 Hz navigator cycle: decisions, then motion."""
         now = self.sim.now
+        if self.goal is not None:
+            self.last_goal_t = now  # a goal is active (the scout's own as well)
         if self.mode == "ALIGN":
             if self.aligned_since is not None:
                 if now - self.aligned_since >= self.p.post_align_pause_s:
@@ -627,9 +673,12 @@ class FastNavigator:
                     self.finish_park_pose()
         elif self.mode == "PARK_HEADING":
             if abs(wrap_angle(self.heading.th_g - self.pose.theta)) < self.p.theta_goal_thresh:
+                if self.scout is not None:
+                    self.log("Back from scout")
                 self.goal = None
                 self.park_goal = None
                 self.scout = None  # back from a scout (or parked at its viewpoint)
+                self.last_goal_t = now  # a goal or scout just ended: wait the full idle time again
                 self.switch_mode("IDLE")
         self.move(dt)
         self.publish_intents()
@@ -788,6 +837,9 @@ class FastNavigator:
             return
         if self.detour is not None and self.sim.now > self.detour["deadline"]:
             self.abandon_detour("took too long")
+            return
+        if self.scout_outbound() and self.sim.now > self.scout["deadline"]:
+            self.abandon_scout("took too long")
             return
         if not self.path_still_valid():
             self.switch_mode("IDLE")

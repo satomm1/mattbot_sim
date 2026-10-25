@@ -1,0 +1,19 @@
+# Scout execution, idle rule: a robot that only pauses between goals does not go scouting. As scout_execute_present,
+# but the robot patrols two points with a 20 s pause at each; scouts need no goal for observe_scout_min_idle_s
+# (30 s here), which a 20 s pause never reaches, so no scout starts although the planner may decide GO.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_execute_patrol_pause observe_scout:=true observe_scout_execute:=true observe_scout_min_idle_s:=30
+name: scout_execute_patrol_pause
+map: current_map
+launch_args: {observe_scout: true, observe_scout_execute: true, observe_scout_min_idle_s: 30}
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159, pause_s: 20}
+  - {x: 34.0, y: 18.95, theta: 0.0, pause_s: 20}
+loop: true
+duration: 200
+expect:
+  scouts_started: 0
+  false_removals: 0
+  goal_resends: 0

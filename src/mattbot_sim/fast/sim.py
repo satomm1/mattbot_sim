@@ -263,7 +263,9 @@ class FastSim:
                 self.note(r, line)
             r.scout_idle = True
             may_scout = getattr(self.orchestrator, "may_scout", None)
-            if (p.observe_scout_execute and decision.get("option") and r.nav.scout is None
+            # localize_and_navigate._maybe_start_scout: only with no goal received or active for the idle time
+            if (p.observe_scout_execute and decision.get("option") and r.nav.scout is None and r.nav.goal is None
+                    and self.now - r.nav.last_goal_t >= p.observe_scout_min_idle_s
                     and (may_scout is None or may_scout(self, r))):
                 r.nav.start_scout(decision["option"])
 

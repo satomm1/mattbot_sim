@@ -1,0 +1,28 @@
+# Scout execution (navigator observe_scout_execute): scout_present, but the idle robot also drives the scout.
+# cone_9 sits in the passage north of the corridor at x = 25.5 (no point of the corridor sees it). The ledger
+# learns it from a peer at the start (belief 1); the robot drives one short leg and then sits idle. Once V beats C
+# the planner decides GO, and after no goal for scout_min_idle_s the navigator drives to the viewpoint, parks on it,
+# looks, and drives back to where it started. The cone comes into view on the way to the viewpoint, so the robot
+# usually re-confirms it before arriving and nothing is due there ("Scout done (targets no longer due)"): the trip,
+# not the look, is what this scenario checks (scout_execute_absent checks the look). One scout (75 s): GO at 30 s, back by
+# about 70 s; later ones would repeat as the belief decays again.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_execute_present observe_scout:=true observe_scout_execute:=true
+name: scout_execute_present
+map: current_map
+launch_args: {observe_scout: true, observe_scout_execute: true}   # fast sim and run_fleet.py
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159}
+loop: false
+duration: 75
+expect:
+  min_scouts_started: 1
+  min_scouts_reached: 1
+  min_scouts_done: 1
+  scouts_abandoned: 0
+  scouts_cancelled: 0
+  detours_started: 0
+  false_removals: 0
+  goal_resends: 0

@@ -52,6 +52,8 @@
        to check an object (/observation/scout; scored by sim_monitor). Off by default; the scout_* scenarios need
        observe_scout:=true. Cost: out and back + turn and dwell + v * (fixed_s + per_s_away * time away). -->
   <arg name="observe_scout" default="false"/>
+  <arg name="observe_scout_execute" default="false"/>  <!-- the navigator drives GO decisions (to the viewpoint, look, back) -->
+  <arg name="scout_robot_heights" default="any"/>  <!-- every simulated robot may scout, whatever ROBOT_HEIGHT this container has -->
   <arg name="observe_max_scout_m" default="30.0"/>
   <arg name="observe_scout_n_trips" default="5"/>
   <arg name="observe_scout_margin_m" default="0.0"/>
@@ -112,6 +114,8 @@
     <arg name="observe_detour_margin_m" value="$(arg observe_detour_margin_m)"/>
     <arg name="observe_landmarks_file" value="$(arg observe_landmarks_file)"/>
     <arg name="observe_scout" value="$(arg observe_scout)"/>
+    <arg name="observe_scout_execute" value="$(arg observe_scout_execute)"/>
+    <arg name="scout_robot_heights" value="$(arg scout_robot_heights)"/>
     <arg name="observe_max_scout_m" value="$(arg observe_max_scout_m)"/>
     <arg name="observe_scout_n_trips" value="$(arg observe_scout_n_trips)"/>
     <arg name="observe_scout_margin_m" value="$(arg observe_scout_margin_m)"/>

@@ -1,0 +1,22 @@
+# Scout execution: a new goal ends a scout. As scout_execute_present, but the robot pauses at its first waypoint long
+# enough to go scouting (GO at about 30 s), and the scenario runner sends the second waypoint while the scout is on its
+# way out: the navigator cancels the scout ("Scout cancelled (new goal)") and drives to the waypoint instead.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_goal_cancels observe_scout:=true observe_scout_execute:=true
+name: scout_goal_cancels
+map: current_map
+launch_args: {observe_scout: true, observe_scout_execute: true}   # fast sim and run_fleet.py
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159, pause_s: 30}
+  - {x: 34.0, y: 18.95, theta: 0.0}
+loop: false
+duration: 70
+expect:
+  min_scouts_started: 1
+  min_scouts_cancelled: 1
+  scouts_done: 0
+  scouts_abandoned: 0
+  false_removals: 0
+  goal_resends: 0

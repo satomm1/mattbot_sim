@@ -1,0 +1,38 @@
+# Fleet coordination with scout execution: a scout on its way gives way to another robot's check that is not later.
+# Robot 92 is the idle robot of scout_execute_present: it decides to scout cone_9 and sets off at about 30 s. Robot
+# 91 shuttles north of the passage (pauses shorter than the 10 s idle time, so it never scouts itself) and, after 92
+# has left, drives to a point 3.3 m north of the cone, where it looks at it on arrival (AT_GOAL), announced with an
+# ETA not later than 92's. Robot 92 gives way en route ("Scout to check
+# ... yielded to robot 91") and drives back; robot 91 does the check.
+# Run: rosrun mattbot_sim run_fleet.py fleet_scout_execute_yields
+name: fleet_scout_execute_yields
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_scout: true, observe_scout_execute: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+duration: 90
+expect:
+  ledger_objects_added: 1
+  false_removals: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # looks at the cone on arrival (AT_GOAL)
+    start: {x: 25.0, y: 31.5, theta: 1.5708}
+    loop: false
+    waypoints:
+      - {x: 25.0, y: 33.5, theta: -1.5708, pause_s: 5}
+      - {x: 25.0, y: 31.5, theta: 1.5708, pause_s: 5}
+      - {x: 25.0, y: 28.3, theta: -1.5708}
+    expect:
+      min_observation_stops_by_kind.AT_GOAL.ENDED: 1
+      scouts_started: 0
+  - id: 92                 # idle in the corridor: sets off on a scout, then gives way
+    start: {x: 28.0, y: 18.95, theta: 0.0}
+    loop: false
+    waypoints:
+      - {x: 30.0, y: 18.95, theta: 3.14159}
+    expect:
+      min_scouts_started: 1
+      min_scouts_yielded: 1
+      scouts_done: 0

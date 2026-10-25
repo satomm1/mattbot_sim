@@ -1,0 +1,15 @@
+# Scout case on grid_office (prepared 2026-10-25, not yet run): where scouting should pay off. Five robots at a light
+# per-robot load (idle most of the time; fleet about 0.4 tasks/min) and six blocking obstacles (costly closures
+# the fleet routes around, so chance sightings and detours rarely reach them). Controls: grid_office_scout_case_3r
+# (three robots) and grid_office_scout_case_2b (two blocking). The base five conditions plus scout_n10 (aggressive).
+extends: grid_office_fleet5.yaml
+name: rechecking_grid_office_scout_case
+tasks:
+  release_rate_per_robot_per_min: 0.08
+obstacles:
+  types:
+    blocking: {count: 6}
+conditions:
+  scout_n10: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true,
+              observe_detour_n_trips: 10, observe_max_detour_m: 25, observe_scout_n_trips: 10, observe_max_scout_m: 45}
+seeds: 30

@@ -240,6 +240,16 @@ Each scenario fails with `observe_coordinate:=false`, where both robots check:
 - `fleet_opportunistic_beats_detour`: robot 91 will look at `cone_9` when it parks north of the passage (AT_GOAL).
   Robot 92's detour gives way to that announced check.
 - `fleet_scout_yields`: idle robot 92 (as `scout_present`) does not decide to scout while robot 91 announces its check.
+- `fleet_scout_execute_yields` (scout execution): robot 92 sets off on a scout of `cone_9`; robot 91 then announces
+  an earlier check of it (AT_GOAL), and robot 92 gives way on its way out and drives back.
+
+Scout execution (the navigator drives scouts: `observe_scout:=true observe_scout_execute:=true`; mattbot_navigation
+README "Scout re-observation"):
+- `scout_execute_present`: the idle robot of `scout_present` scouts `cone_9` and drives back (it usually re-sights the
+  cone on the way, so nothing is left to look at on arrival).
+- `scout_execute_absent`: the same with the cone taken away: the scout's look finds it gone and the ledger drops it.
+- `scout_goal_cancels`: the next waypoint arrives while the scout is on its way out and cancels it.
+- `scout_execute_patrol_pause` (`observe_scout_min_idle_s:=30`): 20 s pauses between patrol points never start a scout.
 
 CPU: every robot runs the whole stack plus 8 DDS processes. Watch `loop_rates_ok` in each robot's summary
 before raising `--speed` or adding robots.

@@ -1,0 +1,9 @@
+# Scout case control: as scout_case.yaml but two blocking obstacles (five robots, light load).
+extends: fleet5.yaml
+name: rechecking_scout_case_2b
+tasks:
+  release_rate_per_robot_per_min: 0.08
+conditions:
+  scout_n10: {observe: true, observe_detour: true, observe_scout: true, observe_scout_execute: true,
+              observe_detour_n_trips: 10, observe_max_detour_m: 25, observe_scout_n_trips: 10, observe_max_scout_m: 45}
+seeds: 30

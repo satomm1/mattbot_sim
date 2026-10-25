@@ -1,0 +1,31 @@
+# Scout execution, cone gone: as scout_execute_present, but cone_9 is taken away at 5 s, so the scout finds it gone.
+# cone_9 sits in the passage north of the corridor at x = 25.5 (no point of the corridor sees it). The ledger
+# learns it from a peer at the start (belief 1); the robot drives one short leg and then sits idle. Once V beats C
+# the planner decides GO, and after no goal for scout_min_idle_s the navigator drives to the viewpoint, parks on it,
+# looks (SCOUT stop: ABSENT, the ledger drops the cone), and drives back to where it started.
+# Run with: roslaunch mattbot_sim sim.launch scenario:=scout_execute_absent observe_scout:=true observe_scout_execute:=true
+name: scout_execute_absent
+map: current_map
+launch_args: {observe_scout: true, observe_scout_execute: true}   # fast sim and run_fleet.py
+start: {x: 28.0, y: 18.95, theta: 0.0}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+waypoints:
+  - {x: 30.0, y: 18.95, theta: 3.14159}
+loop: false
+duration: 300
+events:
+  - {at: 5, remove: cone_9}
+expect:
+  min_scouts_started: 1
+  min_scouts_reached: 1
+  min_scouts_done: 1
+  min_observation_stops_by_kind.SCOUT.ENDED: 1
+  min_observation_outcomes_by_kind.SCOUT.ABSENT: 1
+  correct_removals: 1
+  stale_ledger_objects: 0
+  scouts_abandoned: 0
+  scouts_cancelled: 0
+  detours_started: 0
+  false_removals: 0
+  goal_resends: 0

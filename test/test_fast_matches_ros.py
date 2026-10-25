@@ -24,7 +24,10 @@ from mattbot_sim.scoring import summary_value  # noqa: E402
 FIXTURES = sorted(glob.glob(os.path.join(HERE, "fixtures", "ros", "*.json")))
 EXACT = ["ledger_objects_added", "correct_removals", "false_removals", "observation_outcomes.ABSENT",
          "stale_ledger_objects"]
-COUNTS = ["observation_stops_by_kind.OPPORTUNISTIC.ENDED", "observation_stops_by_kind.DETOUR.ENDED"]
+COUNTS = ["observation_stops_by_kind.OPPORTUNISTIC.ENDED", "observation_stops_by_kind.DETOUR.ENDED",
+          "observation_stops_by_kind.SCOUT.ENDED"]
+SCOUT_TRIPS = ["scouts_started", "scouts_reached", "scouts_done", "scouts_yielded", "scouts_cancelled",
+               "scouts_abandoned"]
 
 
 @pytest.fixture(scope="module", params=FIXTURES, ids=lambda p: os.path.basename(p)[:-5])
@@ -43,7 +46,11 @@ def test_counts_agree(pair):
         for field in EXACT:
             assert summary_value(fs, field) == summary_value(rs, field), field
         for field in COUNTS:
-            r, f = summary_value(rs, field), summary_value(fs, field)
+            try:
+                r = summary_value(rs, field)
+            except KeyError:
+                continue  # fixture recorded before this stop kind was counted
+            f = summary_value(fs, field)
             assert abs(f - r) <= max(1, 0.15 * r), (field, r, f)
         rl, fl = rs.get("removal_latency_s"), fs.get("removal_latency_s")
         assert (rl is None) == (fl is None)
@@ -66,3 +73,17 @@ def test_scout_decisions_agree(pair):
         assert fs["scout_go_not_idle"] == rs["scout_go_not_idle"] == 0
         for oid, r in rs["scout_first_go_s_by_object"].items():
             assert fs["scout_first_go_s_by_object"][oid] == pytest.approx(r, abs=max(10.0, 0.2 * r)), oid
+
+
+def test_scout_trips_agree(pair):
+    """Executed scouts (observe_scout_execute): each trip outcome happens in both or in neither, and the counts
+    differ by at most one (a long run may repeat a scout once the belief has decayed again)."""
+    ros, fast = pair
+    for rs in ros:
+        if not any(rs.get(k) for k in SCOUT_TRIPS):
+            continue  # decision-only fixture (or no scout)
+        fs = fast[rs.get("robot_id", next(iter(fast)))]
+        for k in SCOUT_TRIPS:
+            r, f = int(rs.get(k, 0)), int(fs.get(k, 0))
+            assert (r > 0) == (f > 0), (k, r, f)
+            assert abs(f - r) <= 1, (k, r, f)
