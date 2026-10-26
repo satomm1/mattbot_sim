@@ -1,0 +1,36 @@
+# Fleet coordination with scout execution, the hardware case of 2026-10-25: two idle robots decide to scout the same
+# cone in the same planner tick, before either has heard the other. Both set off; once their announcements arrive,
+# the one that would arrive later (or, within the margin, the higher id) gives way, even if it is still turning
+# toward its route (ALIGN), and drives back. Robot 91 waits north of the passage, robot 92 in the corridor (as
+# scout_execute_present); both decide at about 30 s. Robot 91 is closer, so robot 92 gives way.
+# Run: rosrun mattbot_sim run_fleet.py fleet_scout_simultaneous
+name: fleet_scout_simultaneous
+map: current_map
+fleet_start_s: 60
+launch_args: {observe_scout: true, observe_scout_execute: true}
+objects:
+  - {id: cone_9, class: cone, x: 25.5, y: 25.0, width: 0.4, known_from_peer: true}
+duration: 90
+expect:
+  ledger_objects_added: 1
+  false_removals: 0
+  goal_resends: 0
+robots:
+  - id: 91                 # idle north of the passage: scouts the cone and keeps it
+    start: {x: 25.0, y: 31.5, theta: 1.5708}
+    loop: false
+    waypoints:
+      - {x: 25.0, y: 33.5, theta: -1.5708}
+    expect:
+      min_scouts_started: 1
+      min_scouts_done: 1
+      scouts_yielded: 0
+  - id: 92                 # idle in the corridor: sets off too, then gives way
+    start: {x: 28.0, y: 18.95, theta: 0.0}
+    loop: false
+    waypoints:
+      - {x: 30.0, y: 18.95, theta: 3.14159}
+    expect:
+      min_scouts_started: 1
+      min_scouts_yielded: 1
+      scouts_done: 0

@@ -646,7 +646,9 @@ class FastNavigator:
         if self.goal is not None:
             self.last_goal_t = now  # a goal is active (the scout's own as well)
         if self.mode == "ALIGN":
-            if self.aligned_since is not None:
+            if self.scout_outbound() and self.check_detour_yields():
+                pass  # localize_and_navigate._scout_gives_way: gave way before driving; replanned home
+            elif self.aligned_since is not None:
                 if now - self.aligned_since >= self.p.post_align_pause_s:
                     self.aligned_since = None
                     self.switch_mode("TRACK")
@@ -661,7 +663,9 @@ class FastNavigator:
         elif self.mode == "PARK_POSE":
             gx, gy, _ = self.park_goal
             parked = math.hypot(self.pose.x - gx, self.pose.y - gy) < self.p.park_pose_thresh
-            if self.viewpoint_approach is not None and (self.detour is not None or self.scout_outbound()):
+            if self.scout_outbound() and self.viewpoint_approach is not None and self.check_detour_yields():
+                pass  # gave way while parking on the viewpoint; replanned home
+            elif self.viewpoint_approach is not None and (self.detour is not None or self.scout_outbound()):
                 if parked or now - self.viewpoint_approach > VIEWPOINT_APPROACH_TIMEOUT_S:
                     if self.detour is not None:
                         self.arrive_at_detour_viewpoint()
@@ -787,7 +791,7 @@ class FastNavigator:
         if self.scout_outbound():
             # A scout gives way to any check not later than its own by more than the margin (no commit window)
             stop = self.scout["entry"]["stop"]
-            eta = self.sim.now + max(self.duration - self.progress, 0.0)
+            eta = self.sim.now + self.overhead_s() + max(self.duration - self.progress, 0.0)  # as announced
             winners = []
             for oid in stop.object_ids:
                 w = yields_to(SCOUT, eta, self.robot.id, self.peer_intents(oid), self.p.observe_intent_margin_s)

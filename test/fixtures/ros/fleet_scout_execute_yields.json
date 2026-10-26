@@ -100,7 +100,7 @@
    "wrong_observation_outcomes": 0,
    "blockouts_still_present": [],
    "blockout_clear_after_s": [],
-   "scout_decisions": 7,
+   "scout_decisions": 6,
    "scout_go_decisions": 0,
    "scout_go_not_idle": 0,
    "scout_go_by_object": {
@@ -111,12 +111,12 @@
    "scenario": "fleet_scout_execute_yields",
    "robot_id": 91,
    "run_s": 139.9,
-   "run_wall_s": 65.5,
+   "run_wall_s": 65.1,
    "loop_rates": {
     "navigator": {
      "nominal_hz": 10.0,
-     "mean_hz": 9.96,
-     "min_window_hz": 9.7
+     "mean_hz": 9.94,
+     "min_window_hz": 9.6
     },
     "detector": {
      "nominal_hz": 5.0,
@@ -257,7 +257,7 @@
    "stop_skip_reasons": [],
    "detours_dropped": 0,
    "detours_yielded": 0,
-   "scout_yielded": 2,
+   "scout_yielded": 0,
    "scouts_started": 1,
    "scouts_reached": 0,
    "scouts_done": 0,
@@ -269,32 +269,32 @@
    "wrong_observation_outcomes": 0,
    "blockouts_still_present": [],
    "blockout_clear_after_s": [],
-   "scout_decisions": 14,
+   "scout_decisions": 10,
    "scout_go_decisions": 1,
    "scout_go_not_idle": 0,
    "scout_go_by_object": {
     "cone_9": 1
    },
    "scout_first_go_s_by_object": {
-    "cone_9": 32.7
+    "cone_9": 31.0
    },
    "scout_best_net_m_by_object": {
-    "cone_9": 2.32
+    "cone_9": 1.34
    },
    "scenario": "fleet_scout_execute_yields",
    "robot_id": 92,
-   "run_s": 140.0,
-   "run_wall_s": 65.4,
+   "run_s": 139.9,
+   "run_wall_s": 66.2,
    "loop_rates": {
     "navigator": {
      "nominal_hz": 10.0,
-     "mean_hz": 9.97,
-     "min_window_hz": 9.6
+     "mean_hz": 9.92,
+     "min_window_hz": 9.5
     },
     "detector": {
      "nominal_hz": 5.0,
-     "mean_hz": 5.0,
-     "min_window_hz": 5.0
+     "mean_hz": 4.99,
+     "min_window_hz": 4.9
     }
    },
    "loop_rates_ok": true,

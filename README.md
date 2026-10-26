@@ -242,6 +242,8 @@ Each scenario fails with `observe_coordinate:=false`, where both robots check:
 - `fleet_scout_yields`: idle robot 92 (as `scout_present`) does not decide to scout while robot 91 announces its check.
 - `fleet_scout_execute_yields` (scout execution): robot 92 sets off on a scout of `cone_9`; robot 91 then announces
   an earlier check of it (AT_GOAL), and robot 92 gives way on its way out and drives back.
+- `fleet_scout_simultaneous` (scout execution): two idle robots decide to scout `cone_9` in the same tick; the later
+  one (robot 92) gives way while still turning toward its route and drives back.
 
 Scout execution (the navigator drives scouts: `observe_scout:=true observe_scout_execute:=true`; mattbot_navigation
 README "Scout re-observation"):

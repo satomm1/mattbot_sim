@@ -448,3 +448,27 @@ def csv_rows(path):
 
     with open(path) as f:
         return list(csv.DictReader(f))
+
+
+def test_scout_gives_way_while_still_turning():
+    """A scout that has not started driving yet (ALIGN: turning toward its route, or motors off) still gives way
+    to another robot's check of the same object, and drives back instead (localize_and_navigate._scout_gives_way)."""
+    from dds_utils.intents import Intent
+    from mattbot_sim.fast.params import FastParams
+    from mattbot_sim.fast.sim import FastSim
+
+    path = os.path.join(PKG, "scenarios", "scout_execute_present.yaml")
+    sim = FastSim(path, params=FastParams().update({"observe_scout": True, "observe_scout_execute": True}),
+                  seed=0, duration=75)
+    sim.orchestrator.on_start(sim)
+    r = next(iter(sim.robots.values()))
+    while sim.now < 75 and r.nav.scout is None:
+        sim.step()
+    assert r.nav.scout is not None and r.nav.mode == "ALIGN"  # just dispatched: turning toward the viewpoint
+    oid = r.nav.scout["entry"]["stop"].object_ids[0]
+    # Another robot (lower id) announces its own scout of the same object, arriving sooner
+    rival = Intent(oid, 1, 2, sim.now + 2.0, sim.now + 60.0, True)  # kind 2 = SCOUT, committed
+    sim.peer_intents = lambda robot: [rival]
+    r.nav.step(sim.dt)
+    assert r.nav.scout is not None and r.nav.scout["returning"]  # gave way before driving: on the way back
+    assert r.nav.yielded.get(oid) == 1
