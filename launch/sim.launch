@@ -38,6 +38,9 @@
   <arg name="observe_cooldown_s" default="60.0"/>
   <arg name="observe_min_absent_frames" default="8"/>
   <arg name="cruising_velocity" default="0.40"/>
+  <!-- TRACK controller: classical or qlp (the learned planner; needs qlp_bundle, and scan:=true for its LiDAR) -->
+  <arg name="local_planner" default="classical"/>
+  <arg name="qlp_bundle" default=""/>
 
   <!-- Detours: leave the path to check ledger objects no path point can see (observation_planner decides,
        the navigator drives it). Off by default; the detour_* scenarios need observe_detour:=true. -->
@@ -104,6 +107,8 @@
   </node>
 
   <include file="$(find mattbot_navigation)/launch/localize_and_navigate_combined_map_short.launch">
+    <arg name="local_planner" value="$(arg local_planner)"/>
+    <arg name="qlp_bundle" value="$(arg qlp_bundle)"/>
     <arg name="observe" value="$(arg observe)"/>
     <arg name="observe_dwell_s" value="$(arg observe_dwell_s)"/>
     <arg name="observe_check_below_belief" value="$(arg observe_check_below_belief)"/>
